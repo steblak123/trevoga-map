@@ -1,0 +1,69 @@
+{
+  "name": "trevoga-map",
+  "productName": "Карта тривог",
+  "version": "1.0.0",
+  "description": "Віджет карти повітряних тривог України для робочого столу (дані: alerts.in.ua)",
+  "author": "steblak123",
+  "license": "MIT",
+  "repository": "github:steblak123/trevoga-map",
+  "main": "app/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "icon": "electron build/make-icon.js",
+    "dist": "node build/prepare-token.js && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "koffi": "^2.9.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "mapshaper": "^0.7.66"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true,
+    "koffi@2.16.3": true
+  },
+  "build": {
+    "appId": "ua.trevoga.map",
+    "productName": "Карта тривог",
+    "executableName": "trevoga-map",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "app/**/*",
+      "package.json",
+      "!node_modules/koffi/build/koffi/!(win32_x64)/**",
+      "!node_modules/koffi/src/**",
+      "!node_modules/koffi/doc/**"
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Карта тривог",
+      "runAfterFinish": true,
+      "include": "build/installer.nsh",
+      "artifactName": "trevoga-map-setup-${version}.exe"
+    }
+  }
+}

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Карта тривог — налаштування</title>
+  <style>
+    :root { color-scheme: dark; --bg: #11161f; --panel: #19202c; --line: #273142; --text: #e8edf4; --muted: #93a0b2; --accent: #5fd3ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+    main { padding: 16px 18px 24px; display: flex; flex-direction: column; gap: 14px; }
+    h1 { font-size: 18px; margin: 0; }
+    section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+    label.row { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }
+    .hint { color: var(--muted); font-size: 12px; }
+    input[type=text], input[type=password], input[type=search] {
+      width: 100%; background: #0d1219; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; font: inherit; }
+    input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    input[type=checkbox], input[type=radio] { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+    input[type=range] { accent-color: var(--accent); flex: 1; }
+    .token { display: flex; gap: 6px; }
+    button { background: #243044; color: var(--text); border: 1px solid #34425a; border-radius: 7px; padding: 6px 12px; font: inherit; cursor: pointer; }
+    button:hover { background: #2c3a52; }
+    .inline { display: flex; align-items: center; gap: 10px; }
+    #tree { max-height: 330px; overflow: auto; margin-top: 8px; border-top: 1px solid var(--line); padding-top: 4px; }
+    details { border-bottom: 1px solid #1f2836; }
+    summary { display: flex; align-items: center; gap: 8px; padding: 6px 2px; cursor: pointer; list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    summary::before { content: "▸"; color: var(--muted); width: 10px; transition: transform .15s; }
+    details[open] > summary::before { transform: rotate(90deg); }
+    summary .count { margin-left: auto; color: var(--accent); font-size: 12px; }
+    .raions { padding: 0 0 6px 38px; }
+    .raions label.row { padding: 2px 0; }
+    .city { display: flex; align-items: center; gap: 8px; padding: 6px 2px 6px 20px; border-bottom: 1px solid #1f2836; cursor: pointer; }
+    #chosen { margin-top: 6px; font-size: 13px; color: var(--accent); min-height: 18px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Карта повітряних тривог</h1>
+
+    <section>
+      <h2>Мої райони</h2>
+      <input type="search" id="search" placeholder="Пошук району чи області…">
+      <div id="chosen"></div>
+      <div id="tree"></div>
+      <div class="hint">Коли в обраних районах починається тривога чи відбій, зверху екрана з’являється плашка.</div>
+    </section>
+
+    <section>
+      <h2>Сповіщення</h2>
+      <label class="row"><input type="checkbox" id="overlay"> Плашка поверх усіх вікон</label>
+      <label class="row"><input type="checkbox" id="sound"> Звук при тривозі та відбої</label>
+      <div class="inline" style="padding:4px 0 4px 24px">
+        <span class="hint">Гучність</span><input type="range" id="volume" min="0.05" max="1" step="0.05">
+        <button id="test">Перевірити</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Віджет</h2>
+      <label class="row"><input type="radio" name="layer" value="bottom"> Над ярликами (нижній шар, можна перетягувати)</label>
+      <label class="row"><input type="radio" name="layer" value="desktop"> Під ярликами, як шпалери</label>
+      <div class="hint" style="padding-left:24px">У режимі «під ярликами» миша до карти не доходить. Щоб перемістити її, увімкніть «Режим редагування» в меню трею.</div>
+      <div class="grid2" style="margin-top:6px">
+        <label class="row"><input type="checkbox" id="labels"> Назви областей</label>
+        <label class="row"><input type="checkbox" id="locked"> Закріпити положення</label>
+        <label class="row"><input type="checkbox" id="autostart"> Автозапуск з Windows</label>
+      </div>
+      <div class="inline" style="padding-top:4px">
+        <span class="hint">Прозорість</span><input type="range" id="opacity" min="0.3" max="1" step="0.05">
+      </div>
+    </section>
+
+    <section>
+      <h2>Токен API alerts.in.ua</h2>
+      <div class="token">
+        <input type="password" id="token" spellcheck="false" autocomplete="off">
+        <button id="showToken">👁</button>
+      </div>
+      <div class="hint" id="tokenHint">Зберігається лише на цьому комп’ютері.</div>
+    </section>
+  </main>
+  <script src="regions.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>

@@ -1,0 +1,176 @@
+:root {
+  --calm: rgba(24, 33, 48, 0.9);
+  --red: #b3262b;
+  --yellow: #c9a227;
+  --border-oblast: rgba(255, 255, 255, 0.42);
+  --border-raion: rgba(255, 255, 255, 0.10);
+  --mine: #5fd3ff;
+  --text: #eef2f7;
+  --muted: #9aa7b8;
+  color-scheme: dark;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  font: 13px/1.35 "Segoe UI", system-ui, sans-serif;
+  color: var(--text);
+}
+
+#wrap {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+#map {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55));
+}
+
+.raion path, .city path {
+  fill: var(--calm);
+  stroke: var(--border-raion);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  transition: fill 0.4s;
+}
+.st-A.lvl-red path, .st-A path { fill: var(--red); }
+.st-A.lvl-yellow path { fill: var(--yellow); }
+.raion:hover path, .city:hover path { filter: brightness(1.35); }
+
+#borders path {
+  fill: none;
+  stroke: var(--border-oblast);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.city path { stroke: var(--border-oblast); }
+
+#mine path {
+  fill: none;
+  stroke: var(--mine);
+  stroke-width: 2.2px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px var(--mine));
+}
+#mine .alert path { stroke: #fff; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { stroke-opacity: 0.35; } }
+
+#labels text {
+  fill: #dfe6ef;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: rgba(8, 12, 18, 0.85);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+body.no-labels #labels { display: none; }
+
+#status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 2px 24px 4px;
+  min-height: 22px;
+  text-shadow: 0 1px 2px #000, 0 0 6px rgba(0, 0, 0, 0.9);
+  font-weight: 600;
+}
+#status .item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+#status .dot { width: 9px; height: 9px; border-radius: 50%; background: #3fae5a; box-shadow: 0 0 4px rgba(0,0,0,.8); }
+#status .A .dot { background: #ff3b30; animation: blink 1s infinite; }
+#status .P .dot { background: #ff9f0a; }
+#status .A { color: #ff8a80; }
+#status .P { color: #ffcc80; }
+#status .muted { color: var(--muted); font-weight: 500; }
+#status .err { color: #ffb74d; }
+@keyframes blink { 50% { opacity: 0.3; } }
+
+#credit {
+  position: absolute;
+  left: 6px;
+  bottom: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.8;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+}
+
+#gear, #grip {
+  position: absolute;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+#wrap:hover #gear, #wrap:hover #grip { opacity: 0.85; }
+#gear {
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(10, 14, 20, 0.7);
+  color: #fff;
+  font-size: 15px;
+  line-height: 24px;
+  padding: 0;
+  cursor: pointer;
+}
+#grip {
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 0 55%, rgba(255,255,255,.75) 55% 62%, transparent 62% 72%, rgba(255,255,255,.75) 72% 79%, transparent 79%);
+}
+body.locked #grip, body.passive #grip, body.passive #gear { display: none; }
+
+#tip {
+  position: absolute;
+  display: none;
+  max-width: 260px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: rgba(12, 16, 23, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  font-size: 12px;
+  z-index: 5;
+}
+#tip b { font-size: 13px; }
+#tip .sub { color: var(--muted); }
+#tip .st { margin-top: 3px; font-weight: 600; }
+#tip .st.A { color: #ff6b6b; }
+#tip .st.Y { color: #f2c94c; }
+#tip .st.P { color: #ffb74d; }
+#tip .st.N { color: #7fd18b; }
+#tip ul { margin: 3px 0 0; padding-left: 16px; }
+#tip .note { margin-top: 3px; color: var(--muted); font-style: italic; }
+
+#loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  text-shadow: 0 1px 2px #000;
+}

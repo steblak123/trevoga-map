@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Карта тривог</title>
+  <link rel="stylesheet" href="widget.css">
+</head>
+<body>
+  <div id="wrap">
+    <svg id="map" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+      <g id="raions"></g>
+      <g id="cities"></g>
+      <g id="borders"></g>
+      <g id="mine"></g>
+      <g id="labels"></g>
+    </svg>
+    <div id="status" class="ui"></div>
+    <div id="credit">Дані: alerts.in.ua · Карта: OCHA</div>
+    <button id="gear" class="ui" title="Налаштування">⚙</button>
+    <div id="grip" class="ui" title="Змінити розмір"></div>
+    <div id="tip"></div>
+    <div id="loading">Завантаження карти…</div>
+  </div>
+  <script src="regions.js"></script>
+  <script src="widget.js"></script>
+</body>
+</html>
