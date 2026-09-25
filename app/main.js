@@ -48,7 +48,8 @@ let tray = null;
 let editMode = false;
 let quitting = false;
 
-const state = { iot: null, alerts: null, updatedAt: null, error: null };
+// history: uid -> { start, end } of the last finished alert; starts: uid -> start of the ongoing one.
+const state = { iot: null, alerts: null, updatedAt: null, error: null, history: {}, starts: {} };
 const lastModified = { iot: null, active: null };
 let pollTimer = null;
 let tick = 0;
@@ -62,8 +63,102 @@ const RAION_NAMES = Object.fromEntries(
     .map((r) => [r.uid, r.name]),
 );
 
+const ALL_UIDS = JSON.parse(MAP_JSON).raions.map((r) => r.uid);
+const HISTORY_FILE = path.join(app.getPath('userData'), 'history.json');
+
 function regionName(uid) {
   return RAION_NAMES[uid] || (Regions.OBLAST_BY_UID[uid] || {}).name || `#${uid}`;
+}
+
+// ---------- alert history ----------
+// Every raion: start/end observed from the IoT status while the widget runs.
+// Selected raions: exact times from /v1/regions/{oblast}/alerts/month_ago.json
+// (separate limit of 2 req/min, so requests are queued 35 s apart).
+
+try {
+  state.history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+} catch {}
+
+let prevAll = null;
+const HISTORY_GAP = 35000;
+const historyQueue = new Set();
+let historyTimer = null;
+let lastHistoryAt = 0;
+
+function saveHistory() {
+  try {
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(state.history));
+  } catch {}
+}
+
+function trackTransitions() {
+  const now = Date.now();
+  const cur = {};
+  let changed = false;
+  for (const uid of ALL_UIDS) {
+    const on = Regions.statusOf(state.iot, uid) === 'A';
+    cur[uid] = on;
+    if (on) {
+      const since = Regions.alertSince(state.alerts, uid, RAION_NAMES[uid]);
+      if (since) state.starts[uid] = since;
+      else if (!state.starts[uid] && prevAll) state.starts[uid] = now;
+    } else if (prevAll && prevAll[uid]) {
+      state.history[uid] = { start: state.starts[uid] || null, end: now };
+      delete state.starts[uid];
+      changed = true;
+    } else delete state.starts[uid];
+  }
+  prevAll = cur;
+  if (changed) saveHistory();
+}
+
+function historyTarget(uid) {
+  return Regions.isRaion(uid) ? Regions.oblastOf(uid) : uid;
+}
+
+function queueHistory(delay = 0) {
+  for (const uid of settings.regions) historyQueue.add(historyTarget(uid));
+  if (historyTimer || !historyQueue.size) return;
+  const wait = Math.max(delay, lastHistoryAt + HISTORY_GAP - Date.now(), 0);
+  historyTimer = setTimeout(runHistory, wait);
+}
+
+async function runHistory() {
+  historyTimer = null;
+  const [target] = historyQueue;
+  if (target == null || !apiToken()) return;
+  historyQueue.delete(target);
+  lastHistoryAt = Date.now();
+  try {
+    const res = await fetch(`${API}/v1/regions/${target}/alerts/month_ago.json`, {
+      headers: { Authorization: `Bearer ${apiToken()}` },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (res.ok) applyHistory(target, (await res.json()).alerts || []);
+  } catch {}
+  if (historyQueue.size) historyTimer = setTimeout(runHistory, HISTORY_GAP);
+}
+
+function applyHistory(target, alerts) {
+  for (const uid of settings.regions) {
+    if (historyTarget(uid) !== target) continue;
+    const raion = Regions.isRaion(uid);
+    const list = alerts.filter((a) => {
+      if (a.alert_type !== 'air_raid') return false;
+      const loc = Number(a.location_uid);
+      if (raion) return (a.location_type === 'raion' && loc === uid) || (a.location_type === 'oblast' && loc === target);
+      return loc === uid;
+    });
+    const sessions = Regions.mergeSessions(list);
+    const last = sessions.filter((s) => s.end).pop();
+    const known = state.history[uid];
+    // A locally observed all-clear newer than the API data wins (the API may lag).
+    if (last && (!known || last.end >= known.end - 60000)) state.history[uid] = last;
+    const open = sessions.find((s) => s.end === null);
+    if (open && Regions.statusOf(state.iot, uid) === 'A') state.starts[uid] = open.start;
+  }
+  saveHistory();
+  broadcastState();
 }
 
 // ---------- settings ----------
@@ -166,6 +261,7 @@ async function poll() {
       tick++;
       state.updatedAt = Date.now();
       state.error = null;
+      trackTransitions();
     } catch (e) {
       if (e.status === 401) state.error = 'Невірний або неактивний токен (401)';
       else if (e.status === 403) state.error = 'Доступ заборонено (403)';
@@ -211,6 +307,7 @@ function rebaseline() {
   if (!state.iot) return;
   prevStatus = currentStatuses();
   updateOverlayList();
+  queueHistory();
 }
 
 function activeItems(statuses) {
@@ -218,7 +315,7 @@ function activeItems(statuses) {
   for (const [uid, st] of statuses) {
     if (st === 'N') continue;
     const al = Regions.alertsFor(state.alerts, uid, RAION_NAMES[uid]);
-    const since = Regions.alertSince(state.alerts, uid, RAION_NAMES[uid]);
+    const since = Regions.alertSince(state.alerts, uid, RAION_NAMES[uid]) || state.starts[uid] || null;
     const places = st === 'P' ? Regions.partialPlaces(state.alerts, uid, RAION_NAMES[uid]) : [];
     items.push({ uid, name: regionName(uid), status: st, since, places, level: al.some((a) => a.alert_level === 'red') ? 'red' : al.length ? al[0].alert_level : null });
   }
@@ -230,19 +327,24 @@ function checkMyRegions() {
   const now = currentStatuses();
   const first = prevStatus === null;
   let started = false;
-  let cleared = false;
+  const cleared = [];
   for (const [uid, st] of now) {
     const was = first ? 'N' : prevStatus.get(uid) || 'N';
     if (was === 'N' && st !== 'N') started = true;
-    if (was !== 'N' && st === 'N') cleared = true;
+    if (was !== 'N' && st === 'N') cleared.push(uid);
   }
   prevStatus = now;
   const items = activeItems(now);
   refreshTray();
+  if (first) queueHistory(3000);
+  // Give the API a minute to close the record, then fetch exact start/end times.
+  if (cleared.length) queueHistory(70000);
 
   if (started) showOverlay({ kind: 'alert', items, sound: true });
-  else if (items.length === 0 && cleared) showOverlay({ kind: 'clear', items: [], sound: true });
-  else updateOverlayList();
+  else if (items.length === 0 && cleared.length) {
+    const done = cleared.map((uid) => ({ uid, name: regionName(uid), ...(state.history[uid] || {}) }));
+    showOverlay({ kind: 'clear', items: done, sound: true });
+  } else updateOverlayList();
 }
 
 function updateOverlayList() {
@@ -513,7 +615,9 @@ function testAlert() {
   const uid = settings.regions[0] || 31;
   showOverlay({ kind: 'alert', test: true, items: [{ uid, name: regionName(uid), status: 'A', since: Date.now() - 5 * 60000, level: 'red' }], sound: true });
   setTimeout(() => {
-    if (overlayState && overlayState.test) showOverlay({ kind: 'clear', test: true, items: [], sound: true });
+    if (!overlayState || !overlayState.test) return;
+    const end = Date.now();
+    showOverlay({ kind: 'clear', test: true, items: [{ uid, name: regionName(uid), start: end - 5 * 60000, end }], sound: true });
   }, 8000);
 }
 
@@ -562,6 +666,7 @@ if (!app.requestSingleInstanceLock()) {
     if (!apiToken() || !settings.regions.length) setTimeout(openSettings, 800);
 
     screen.on('display-metrics-changed', () => setTimeout(applyLayer, 500));
+    setInterval(() => queueHistory(), 15 * 60000);
     // Keep the bottom layer at the bottom, and re-pin if Explorer recreated the desktop.
     setInterval(() => {
       if (!widget || widget.isDestroyed()) return;

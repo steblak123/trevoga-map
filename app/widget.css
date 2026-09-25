@@ -104,7 +104,7 @@ body.no-labels #labels { display: none; }
 #credit {
   position: absolute;
   left: 6px;
-  bottom: 4px;
+  top: 4px;
   font-size: 10px;
   color: var(--muted);
   opacity: 0.8;
@@ -164,6 +164,7 @@ body.locked #grip, body.passive #grip, body.passive #gear { display: none; }
 #tip .st.P { color: #ffb74d; }
 #tip .st.N { color: #7fd18b; }
 #tip ul { margin: 3px 0 0; padding-left: 16px; }
+#tip .time { margin-top: 3px; color: #cfd8e3; }
 #tip .note { margin-top: 3px; color: var(--muted); font-style: italic; }
 
 #loading {

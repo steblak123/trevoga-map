@@ -68,7 +68,7 @@ function render(p) {
     bar.querySelector('.text').textContent = partialOnly ? 'ТРИВОГА В ЧАСТИНІ ВАШОГО РАЙОНУ' : 'ПОВІТРЯНА ТРИВОГА';
     list.innerHTML = p.items
       .map((i) => {
-        const since = i.since ? ` — ${R.formatDuration(Date.now() - i.since) || 'щойно'}` : '';
+        const since = i.since ? ` — з ${R.formatTime(i.since)} (${R.formatDuration(Date.now() - i.since) || 'щойно'})` : '';
         const places = i.places && i.places.length ? i.places.join(', ') : 'частина району';
         const part = i.status === 'P' ? ` (${esc(places)})` : '';
         const lvl = i.level === 'yellow' ? ' · жовтий рівень' : '';
@@ -78,7 +78,13 @@ function render(p) {
     hint.textContent = p.test ? 'Це перевірка плашки' : 'Пройдіть в укриття';
   } else {
     bar.querySelector('.text').textContent = 'ВІДБІЙ ТРИВОГИ';
-    list.innerHTML = '';
+    list.innerHTML = (p.items || [])
+      .filter((i) => i.end)
+      .map((i) => {
+        const dur = i.start ? `, тривала ${R.formatDuration(i.end - i.start)}` : '';
+        return `<div>${esc(i.name)}: ${esc(R.formatRange(i.start, i.end))}${esc(dur)}</div>`;
+      })
+      .join('');
     hint.textContent = p.test ? 'Це перевірка плашки' : 'У ваших районах тривогу скасовано';
     hideTimer = setTimeout(() => window.bridge.hideOverlay(), 10000);
   }

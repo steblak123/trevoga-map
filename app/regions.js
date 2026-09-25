@@ -125,8 +125,51 @@
     unknown: 'Невідома загроза',
   };
 
+  const pad = (n) => String(n).padStart(2, '0');
+  const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+
+  // "09:43", "вчора 23:15" or "24.09 23:15".
+  function formatTime(ms) {
+    const d = new Date(ms);
+    const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const today = new Date();
+    if (dayKey(d) === dayKey(today)) return hm;
+    const y = new Date(today);
+    y.setDate(today.getDate() - 1);
+    if (dayKey(d) === dayKey(y)) return `вчора ${hm}`;
+    const year = d.getFullYear() === today.getFullYear() ? '' : `.${String(d.getFullYear()).slice(2)}`;
+    return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}${year} ${hm}`;
+  }
+
+  // "04:49–09:08" when both ends are on the same day, otherwise full times.
+  function formatRange(start, end) {
+    if (!start) return `відбій ${formatTime(end)}`;
+    if (dayKey(new Date(start)) === dayKey(new Date(end))) {
+      const e = new Date(end);
+      return `${formatTime(start)}–${pad(e.getHours())}:${pad(e.getMinutes())}`;
+    }
+    return `${formatTime(start)} – ${formatTime(end)}`;
+  }
+
+  // Merges overlapping alert records into continuous sessions [{ start, end|null }].
+  function mergeSessions(list) {
+    const items = list
+      .map((a) => ({ start: Date.parse(a.started_at), end: a.finished_at ? Date.parse(a.finished_at) : null }))
+      .filter((s) => s.start)
+      .sort((a, b) => a.start - b.start);
+    const out = [];
+    for (const s of items) {
+      const last = out[out.length - 1];
+      if (last && (last.end === null || s.start <= last.end + 60000)) {
+        last.end = last.end === null || s.end === null ? null : Math.max(last.end, s.end);
+      } else out.push({ ...s });
+    }
+    return out;
+  }
+
   function formatDuration(ms) {
     if (!(ms > 0)) return '';
+    if (ms < 60000) return '<1 хв';
     const m = Math.floor(ms / 60000);
     const h = Math.floor(m / 60);
     const d = Math.floor(h / 24);
@@ -142,7 +185,7 @@
   const api = {
     OBLASTS, RAION_RANGES, OBLAST_BY_UID, OBLAST_BY_NAME,
     oblastOf, isRaion, statusOf, alertsFor, alertSince, partialPlaces,
-    ALERT_TYPES, THREAT_TYPES, formatDuration, shortName,
+    ALERT_TYPES, THREAT_TYPES, formatDuration, formatTime, formatRange, mergeSessions, shortName,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Regions = api;

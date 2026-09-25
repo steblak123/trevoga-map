@@ -82,7 +82,21 @@ function paintMine() {
 
 function sinceFor(uid) {
   const s = shapes.get(uid);
-  return R.alertSince(state.alerts, uid, s && s.name);
+  return R.alertSince(state.alerts, uid, s && s.name) || (state.starts && state.starts[uid]) || null;
+}
+
+// "з 09:43 (25 хв)" for an ongoing alert.
+function sinceText(uid) {
+  const since = sinceFor(uid);
+  return since ? `з ${R.formatTime(since)} (${R.formatDuration(Date.now() - since)})` : '';
+}
+
+// "04:49–09:08 (4 год 19 хв)" for the last finished alert, if known.
+function lastText(uid) {
+  const h = state.history && state.history[uid];
+  if (!h || !h.end) return '';
+  const dur = h.start ? ` (${R.formatDuration(h.end - h.start)})` : '';
+  return R.formatRange(h.start, h.end) + dur;
 }
 
 function paintStatus() {
@@ -108,9 +122,11 @@ function paintStatus() {
     const s = shapes.get(uid);
     const name = escapeHtml(R.shortName(s ? s.name : uid));
     let text = 'спокійно';
-    if (st === 'A') {
-      const since = sinceFor(uid);
-      text = 'тривога' + (since ? ' ' + R.formatDuration(Date.now() - since) : '');
+    if (st === 'N') {
+      const last = lastText(uid);
+      if (last) text += ` <span class="muted">· остання ${escapeHtml(last)}</span>`;
+    } else if (st === 'A') {
+      text = `тривога ${escapeHtml(sinceText(uid))}`;
     } else if (st === 'P') {
       const places = R.partialPlaces(state.alerts, uid, s && s.name);
       text = 'тривога ' + (places.length ? 'в: ' + escapeHtml(places.join(', ')) : 'в частині району');
@@ -147,9 +163,12 @@ function showTip(uid, ev) {
     if (places.length) html += `<ul>${places.map((p) => `<li>${escapeHtml(p)}</li>`).join('')}</ul>`;
   } else {
     const lvlText = lvl === 'yellow' ? ' (жовтий рівень)' : lvl === 'red' ? ' (червоний рівень)' : '';
-    const since = sinceFor(uid);
     if (st !== 'N') {
-      html += `<div class="st ${lvl === 'yellow' ? 'Y' : st}">Повітряна тривога${lvlText}${since ? ' · ' + R.formatDuration(Date.now() - since) : ''}</div>`;
+      html += `<div class="st ${lvl === 'yellow' ? 'Y' : st}">Повітряна тривога${lvlText}</div>`;
+      const since = sinceFor(uid);
+      if (since) {
+        html += `<div class="time">Початок: ${escapeHtml(R.formatTime(since))} · триває ${escapeHtml(R.formatDuration(Date.now() - since))}</div>`;
+      }
     }
     const other = alerts.filter((a) => a.alert_type !== 'air_raid');
     const threats = new Set();
@@ -158,6 +177,10 @@ function showTip(uid, ev) {
     if (threats.size) html += `<ul>${[...threats].map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ul>`;
     const note = alerts.map((a) => a.notes).find(Boolean);
     if (note) html += `<div class="note">${escapeHtml(note)}</div>`;
+  }
+  if (st !== 'A') {
+    const last = lastText(uid);
+    if (last) html += `<div class="time">Остання тривога: ${escapeHtml(last)}</div>`;
   }
   const tip = $('tip');
   tip.innerHTML = html;
