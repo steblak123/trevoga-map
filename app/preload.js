@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('bridge', {
   onState: on('state'),
   onOverlay: on('overlay'),
   openSettings: () => ipcRenderer.send('open-settings'),
+  wantHistory: (uid) => ipcRenderer.send('want-history', uid),
   testAlert: () => ipcRenderer.send('test-alert'),
   hideOverlay: () => ipcRenderer.send('overlay-hide'),
   overlayIgnore: (v) => ipcRenderer.send('overlay-ignore', v),

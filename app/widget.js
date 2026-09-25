@@ -142,6 +142,7 @@ function escapeHtml(s) {
 
 // ---------- tooltip ----------
 
+const historyAsked = new Set(); // history targets already requested from the main process
 let tipTarget = null; // { uid, ev } of the tooltip on screen, re-rendered on data updates
 
 function showTip(uid, ev) {
@@ -180,7 +181,15 @@ function showTip(uid, ev) {
   }
   if (st !== 'A') {
     const last = lastText(uid);
+    const target = R.isRaion(uid) ? R.oblastOf(uid) : uid;
+    const fetched = state.fetched && state.fetched[target];
     if (last) html += `<div class="time">Остання тривога: ${escapeHtml(last)}</div>`;
+    else if (fetched) html += `<div class="time">За останній місяць тривог не було</div>`;
+    else html += `<div class="time">Остання тривога: завантаження…</div>`;
+    if (!fetched && !historyAsked.has(target)) {
+      historyAsked.add(target);
+      window.bridge.wantHistory(uid);
+    }
   }
   const tip = $('tip');
   tip.innerHTML = html;

@@ -71,23 +71,31 @@ function regionName(uid) {
 }
 
 // ---------- alert history ----------
-// Every raion: start/end observed from the IoT status while the widget runs.
-// Selected raions: exact times from /v1/regions/{oblast}/alerts/month_ago.json
-// (separate limit of 2 req/min, so requests are queued 35 s apart).
+// Exact times come from /v1/regions/{oblast}/alerts/month_ago.json (one request covers
+// all raions of an oblast; separate limit of 2 req/min, so requests go 35 s apart).
+// Oblasts are fetched in the background, the hovered one first; selected raions are
+// refreshed every 15 min and after an all-clear. Between fetches, changes observed
+// in the IoT status keep the data current. Everything is kept in history.json.
 
+state.fetched = {}; // history target uid -> time of the last successful fetch
 try {
-  state.history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+  const saved = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+  if (saved.raions) {
+    state.history = saved.raions;
+    state.fetched = saved.fetched || {};
+  } else state.history = saved;
 } catch {}
 
 let prevAll = null;
 const HISTORY_GAP = 35000;
-const historyQueue = new Set();
+const HISTORY_MAX_AGE = 6 * 3600000;
+const historyQueue = []; // targets, front = next
 let historyTimer = null;
 let lastHistoryAt = 0;
 
 function saveHistory() {
   try {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(state.history));
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify({ raions: state.history, fetched: state.fetched }));
   } catch {}
 }
 
@@ -116,31 +124,60 @@ function historyTarget(uid) {
   return Regions.isRaion(uid) ? Regions.oblastOf(uid) : uid;
 }
 
-function queueHistory(delay = 0) {
-  for (const uid of settings.regions) historyQueue.add(historyTarget(uid));
-  if (historyTimer || !historyQueue.size) return;
+const HISTORY_TARGETS = [...new Set(ALL_UIDS.map(historyTarget))];
+
+// front: fetch before the rest of the queue; force: fetch even if the data is fresh.
+function queueTarget(target, { front = false, force = false } = {}) {
+  if (!force && Date.now() - (state.fetched[target] || 0) < HISTORY_MAX_AGE) return;
+  const i = historyQueue.indexOf(target);
+  if (i >= 0) {
+    if (!front) return;
+    historyQueue.splice(i, 1);
+  }
+  front ? historyQueue.unshift(target) : historyQueue.push(target);
+}
+
+function scheduleHistory(delay = 0) {
+  if (historyTimer || !historyQueue.length) return;
   const wait = Math.max(delay, lastHistoryAt + HISTORY_GAP - Date.now(), 0);
   historyTimer = setTimeout(runHistory, wait);
 }
 
+// Selected raions first (always refreshed), then any stale oblast in the background.
+function queueHistory(delay = 0) {
+  for (const t of HISTORY_TARGETS) queueTarget(t);
+  for (const uid of [...settings.regions].reverse()) queueTarget(historyTarget(uid), { front: true, force: true });
+  scheduleHistory(delay);
+}
+
+function wantHistory(uid) {
+  queueTarget(historyTarget(uid), { front: true });
+  scheduleHistory();
+}
+
 async function runHistory() {
   historyTimer = null;
-  const [target] = historyQueue;
+  const target = historyQueue.shift();
   if (target == null || !apiToken()) return;
-  historyQueue.delete(target);
   lastHistoryAt = Date.now();
   try {
     const res = await fetch(`${API}/v1/regions/${target}/alerts/month_ago.json`, {
       headers: { Authorization: `Bearer ${apiToken()}` },
       signal: AbortSignal.timeout(30000),
     });
+    console.log(`[history] ${target}: HTTP ${res.status}, queue: ${historyQueue.join(',')}`);
     if (res.ok) applyHistory(target, (await res.json()).alerts || []);
-  } catch {}
-  if (historyQueue.size) historyTimer = setTimeout(runHistory, HISTORY_GAP);
+    else if (res.status === 404) state.fetched[target] = Date.now(); // no history for this location
+    else if (res.status === 429) lastHistoryAt = Date.now() + 60000;
+  } catch (e) {
+    console.log(`[history] ${target}: ${e.message}`);
+  }
+  scheduleHistory();
 }
 
 function applyHistory(target, alerts) {
-  for (const uid of settings.regions) {
+  state.fetched[target] = Date.now();
+  for (const uid of ALL_UIDS) {
     if (historyTarget(uid) !== target) continue;
     const raion = Regions.isRaion(uid);
     const list = alerts.filter((a) => {
@@ -635,6 +672,7 @@ ipcMain.handle('set-settings', (_e, patch) => {
 ipcMain.handle('get-state', () => state);
 ipcMain.handle('map-data', () => JSON.parse(MAP_JSON));
 ipcMain.on('open-settings', openSettings);
+ipcMain.on('want-history', (_e, uid) => wantHistory(Number(uid)));
 ipcMain.on('test-alert', testAlert);
 ipcMain.on('overlay-hide', hideOverlay);
 ipcMain.on('overlay-ignore', (_e, ignore) => overlay && overlay.setIgnoreMouseEvents(ignore, { forward: true }));
