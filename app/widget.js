@@ -250,6 +250,100 @@ document.addEventListener('contextmenu', (ev) => {
 document.addEventListener('dblclick', () => window.bridge.openSettings());
 $('gear').addEventListener('click', () => window.bridge.openSettings());
 
+// ---------- PC load panel ----------
+
+const SYS_POINTS = 60; // 2 minutes at one sample per 2 s
+const sysHistory = new Map(); // tile id -> [values] (network: [[down, up]])
+const SYS_COLORS = { cpu: '#3aa0ff', ram: '#b670ff', disk: '#6cc24a', net: '#ff7ab6', gpu: '#36c5b0' };
+
+const num = (v, digits = 1) => v.toLocaleString('uk-UA', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+function pushHistory(id, value) {
+  const h = sysHistory.get(id) || [];
+  h.push(value);
+  if (h.length > SYS_POINTS) h.shift();
+  sysHistory.set(id, h);
+  return h;
+}
+
+function sparkPath(values, max, area) {
+  if (!values.length) return '';
+  const step = 60 / (SYS_POINTS - 1);
+  const x0 = 60 - (values.length - 1) * step;
+  const pts = values.map((v, i) => `${(x0 + i * step).toFixed(1)},${(30 - (Math.min(v || 0, max) / max) * 28).toFixed(1)}`);
+  const line = 'M' + pts.join('L');
+  return area ? `${line}L60,30L${x0.toFixed(1)},30Z` : line;
+}
+
+function netText(down, up) {
+  const m = Math.max(down || 0, up || 0);
+  const [div, unit, d] = m >= 1e9 ? [1e9, 'Гбіт/с', 1] : m >= 1e6 ? [1e6, 'Мбіт/с', 1] : [1e3, 'Кбіт/с', 0];
+  return `↑${num((up || 0) / div, d)} ↓${num((down || 0) / div, d)} ${unit}`;
+}
+
+function tile(kind, id, title, value, values, { max = 100, second = null, hot = false } = {}) {
+  const spark = `<svg class="spark" viewBox="0 0 60 30" preserveAspectRatio="none">`
+    + `<path class="area" d="${sparkPath(values, max, true)}"/>`
+    + `<path class="line" d="${sparkPath(values, max, false)}"/>`
+    + (second ? `<path class="line2" d="${sparkPath(second, max, false)}"/>` : '')
+    + `</svg>`;
+  return `<div class="tile${hot ? ' hot' : ''}" style="--c:${SYS_COLORS[kind]}">${spark}`
+    + `<div class="txt"><div class="t">${escapeHtml(title)}</div><div class="v">${escapeHtml(value)}</div></div></div>`;
+}
+
+function renderSys(data) {
+  const cfg = settings && settings.sys;
+  const box = $('sys');
+  if (!cfg || !cfg.show || !data) {
+    box.innerHTML = '';
+    return;
+  }
+  const html = [];
+  if (cfg.cpu) {
+    const h = pushHistory('cpu', data.cpu.pct);
+    const ghz = data.cpu.ghz ? ` · ${num(data.cpu.ghz, 2)} ГГц` : '';
+    html.push(tile('cpu', 'cpu', 'ЦП', `${data.cpu.pct ?? '—'}%${ghz}`, h, { hot: data.cpu.pct >= 85 }));
+  }
+  if (cfg.ram) {
+    const pct = Math.round((data.ram.used / data.ram.total) * 100);
+    const h = pushHistory('ram', pct);
+    const gb = (b) => num(b / 1024 ** 3, 1);
+    html.push(tile('ram', 'ram', "Пам'ять", `${gb(data.ram.used)}/${gb(data.ram.total)} ГБ (${pct}%)`, h, { hot: pct >= 85 }));
+  }
+  if (cfg.disk) {
+    for (const d of data.disks) {
+      const h = pushHistory(d.id, d.active);
+      const title = `Диск ${d.num}${d.letters ? ` (${d.letters})` : ''}`;
+      html.push(tile('disk', d.id, title, `${d.active ?? 0}%${d.kind ? ' · ' + d.kind : ''}`, h, { hot: d.active >= 85 }));
+    }
+  }
+  if (cfg.net) {
+    for (const n of data.nets) {
+      const h = pushHistory(n.id, [n.down || 0, n.up || 0]);
+      const max = Math.max(1e5, ...h.flat());
+      html.push(tile('net', n.id, n.name, netText(n.down, n.up), h.map((x) => x[0]), { max, second: h.map((x) => x[1]) }));
+    }
+  }
+  if (cfg.gpu) {
+    for (const g of data.gpus) {
+      const h = pushHistory(g.id, g.pct);
+      html.push(tile('gpu', g.id, g.name, `${g.pct}% · відеокарта`, h, { hot: g.pct >= 85 }));
+    }
+  }
+  box.innerHTML = html.join('');
+  fitWindow();
+}
+
+// Grows the window once when the panel would squeeze the map (map is ~0.68 as tall as wide).
+let fittedFor = 0;
+function fitWindow() {
+  const extra = $('sys').offsetHeight + $('status').offsetHeight;
+  if (!extra || extra === fittedFor) return;
+  fittedFor = extra;
+  const need = Math.ceil(innerWidth * 0.68 + extra);
+  if (innerHeight < need - 20) window.bridge.fitHeight(need);
+}
+
 // ---------- settings / state ----------
 
 function applySettings(s) {
@@ -258,6 +352,7 @@ function applySettings(s) {
   document.body.classList.toggle('no-labels', !s.labels);
   document.body.classList.toggle('locked', !!s.locked);
   document.body.classList.toggle('passive', s.layer === 'desktop' && !s.editMode);
+  if (!s.sys || !s.sys.show) renderSys(null);
   paint();
 }
 
@@ -272,6 +367,7 @@ function applySettings(s) {
     paint();
     if (tipTarget) showTip(tipTarget.uid, tipTarget.ev);
   });
+  window.bridge.onSys(renderSys);
   setIgnore(true);
   setInterval(paintStatus, 30000);
 })();

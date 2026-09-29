@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('bridge', {
   onSettings: on('settings'),
   onState: on('state'),
   onOverlay: on('overlay'),
+  onSys: on('sys'),
   openSettings: () => ipcRenderer.send('open-settings'),
   wantHistory: (uid) => ipcRenderer.send('want-history', uid),
   testAlert: () => ipcRenderer.send('test-alert'),
@@ -19,4 +20,5 @@ contextBridge.exposeInMainWorld('bridge', {
   contextMenu: () => ipcRenderer.send('context-menu'),
   dragStart: () => ipcRenderer.send('drag-start'),
   resizeStart: () => ipcRenderer.send('resize-start'),
+  fitHeight: (h) => ipcRenderer.send('fit-height', h),
 });

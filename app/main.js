@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const Regions = require('./regions');
 const native = require('./native');
+const sysmon = require('./sysmon');
 
 const ROOT = path.join(__dirname, '..');
 const API = 'https://api.alerts.in.ua';
@@ -23,6 +24,7 @@ const DEFAULTS = {
   opacity: 1,
   locked: false,
   bounds: null,
+  sys: { show: true, cpu: true, ram: true, disk: true, net: true, gpu: true }, // PC load panel under the map
 };
 
 // Default token baked in at build time (see build/prepare-token.js); a user token in settings wins.
@@ -682,6 +684,15 @@ ipcMain.on('drag-start', () => {
   if (!widget || settings.locked) return;
   trackMouse((b, dx, dy) => widget.setBounds({ x: b.x + dx, y: b.y + dy, width: b.width, height: b.height }));
 });
+ipcMain.on('fit-height', (_e, height) => {
+  if (!widget || settings.locked || (settings.layer === 'desktop' && !editMode)) return;
+  const b = widget.getBounds();
+  if (height <= b.height) return;
+  const h = Math.min(Math.round(height), 1400);
+  const wa = screen.getDisplayMatching(b).workArea;
+  widget.setBounds({ ...b, y: Math.max(wa.y, Math.min(b.y, wa.y + wa.height - h)), height: h });
+  saveBounds();
+});
 ipcMain.on('resize-start', () => {
   if (!widget || settings.locked) return;
   trackMouse((b, dx, dy) =>
@@ -705,6 +716,10 @@ if (!app.requestSingleInstanceLock()) {
 
     screen.on('display-metrics-changed', () => setTimeout(applyLayer, 500));
     setInterval(() => queueHistory(), 15 * 60000);
+    setInterval(() => {
+      if (!settings.sys.show || !widget || widget.isDestroyed()) return;
+      widget.webContents.send('sys', sysmon.sample());
+    }, 2000);
     // Keep the bottom layer at the bottom, and re-pin if Explorer recreated the desktop.
     setInterval(() => {
       if (!widget || widget.isDestroyed()) return;

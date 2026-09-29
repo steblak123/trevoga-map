@@ -112,6 +112,11 @@ function fill(s) {
   $('autostart').checked = s.autostart;
   $('opacity').value = s.opacity;
   for (const r of document.querySelectorAll('input[name=layer]')) r.checked = r.value === s.layer;
+  $('sysShow').checked = s.sys.show;
+  for (const cb of document.querySelectorAll('input[data-sys]')) {
+    cb.checked = s.sys[cb.dataset.sys];
+    cb.disabled = !s.sys.show;
+  }
   if (document.activeElement !== $('token')) $('token').value = s.token;
   $('token').placeholder = s.hasEmbeddedToken ? 'Використовується вбудований токен' : 'Вставте токен';
   $('tokenHint').textContent = s.hasEmbeddedToken
@@ -136,6 +141,10 @@ function fill(s) {
     r.addEventListener('change', () => save({ layer: r.value }));
   }
   $('test').addEventListener('click', () => window.bridge.testAlert());
+  $('sysShow').addEventListener('change', (e) => save({ sys: { ...settings.sys, show: e.target.checked } }));
+  for (const cb of document.querySelectorAll('input[data-sys]')) {
+    cb.addEventListener('change', () => save({ sys: { ...settings.sys, [cb.dataset.sys]: cb.checked } }));
+  }
   $('token').addEventListener('change', (e) => save({ token: e.target.value.trim() }));
   $('showToken').addEventListener('click', () => {
     const t = $('token');
