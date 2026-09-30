@@ -101,6 +101,35 @@ function filterTree(q) {
   }
 }
 
+// One checkbox per PC load cell present on this computer, grouped by type.
+async function buildSysItems() {
+  const box = $('sysItems');
+  const items = await window.bridge.getSysItems();
+  let group = null;
+  for (const it of items) {
+    if (it.group !== group) {
+      group = it.group;
+      const g = document.createElement('div');
+      g.className = 'group';
+      g.textContent = group;
+      box.appendChild(g);
+    }
+    const row = document.createElement('label');
+    row.className = 'row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.dataset.sys = it.id;
+    row.append(cb, ' ' + it.title);
+    box.appendChild(row);
+    cb.addEventListener('change', () => {
+      const hidden = new Set(settings.sys.hidden || []);
+      cb.checked ? hidden.delete(it.id) : hidden.add(it.id);
+      save({ sys: { ...settings.sys, hidden: [...hidden] } });
+    });
+  }
+  fill(settings);
+}
+
 function fill(s) {
   settings = s;
   selected = new Set(s.regions.map(Number));
@@ -113,10 +142,9 @@ function fill(s) {
   $('opacity').value = s.opacity;
   for (const r of document.querySelectorAll('input[name=layer]')) r.checked = r.value === s.layer;
   $('sysShow').checked = s.sys.show;
-  for (const cb of document.querySelectorAll('input[data-sys]')) {
-    cb.checked = s.sys[cb.dataset.sys];
-    cb.disabled = !s.sys.show;
-  }
+  $('sysItems').classList.toggle('off', !s.sys.show);
+  const hidden = new Set(s.sys.hidden || []);
+  for (const cb of document.querySelectorAll('input[data-sys]')) cb.checked = !hidden.has(cb.dataset.sys);
   if (document.activeElement !== $('token')) $('token').value = s.token;
   $('token').placeholder = s.hasEmbeddedToken ? 'Використовується вбудований токен' : 'Вставте токен';
   $('tokenHint').textContent = s.hasEmbeddedToken
@@ -142,9 +170,7 @@ function fill(s) {
   }
   $('test').addEventListener('click', () => window.bridge.testAlert());
   $('sysShow').addEventListener('change', (e) => save({ sys: { ...settings.sys, show: e.target.checked } }));
-  for (const cb of document.querySelectorAll('input[data-sys]')) {
-    cb.addEventListener('change', () => save({ sys: { ...settings.sys, [cb.dataset.sys]: cb.checked } }));
-  }
+  await buildSysItems();
   $('token').addEventListener('change', (e) => save({ token: e.target.value.trim() }));
   $('showToken').addEventListener('click', () => {
     const t = $('token');

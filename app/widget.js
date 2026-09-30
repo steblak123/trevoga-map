@@ -281,7 +281,7 @@ function netText(down, up) {
   return `↑${num((up || 0) / div, d)} ↓${num((down || 0) / div, d)} ${unit}`;
 }
 
-function tile(kind, id, title, value, values, { max = 100, second = null, hot = false } = {}) {
+function tile(kind, title, value, values, { max = 100, second = null, hot = false } = {}) {
   const spark = `<svg class="spark" viewBox="0 0 60 30" preserveAspectRatio="none">`
     + `<path class="area" d="${sparkPath(values, max, true)}"/>`
     + `<path class="line" d="${sparkPath(values, max, false)}"/>`
@@ -291,6 +291,14 @@ function tile(kind, id, title, value, values, { max = 100, second = null, hot = 
     + `<div class="txt"><div class="t">${escapeHtml(title)}</div><div class="v">${escapeHtml(value)}</div></div></div>`;
 }
 
+// Tiles shrink together with the widget: full size from 760 px wide, down to 55 %.
+function sysScale() {
+  const s = Math.max(0.55, Math.min(1, innerWidth / 760));
+  document.documentElement.style.setProperty('--sys-scale', s.toFixed(3));
+}
+addEventListener('resize', sysScale);
+sysScale();
+
 function renderSys(data) {
   const cfg = settings && settings.sys;
   const box = $('sys');
@@ -298,37 +306,35 @@ function renderSys(data) {
     box.innerHTML = '';
     return;
   }
+  const hidden = new Set(cfg.hidden || []);
   const html = [];
-  if (cfg.cpu) {
+  if (!hidden.has('cpu')) {
     const h = pushHistory('cpu', data.cpu.pct);
     const ghz = data.cpu.ghz ? ` · ${num(data.cpu.ghz, 2)} ГГц` : '';
-    html.push(tile('cpu', 'cpu', 'ЦП', `${data.cpu.pct ?? '—'}%${ghz}`, h, { hot: data.cpu.pct >= 85 }));
+    html.push(tile('cpu', 'ЦП', `${data.cpu.pct ?? '—'}%${ghz}`, h, { hot: data.cpu.pct >= 85 }));
   }
-  if (cfg.ram) {
+  if (!hidden.has('ram')) {
     const pct = Math.round((data.ram.used / data.ram.total) * 100);
     const h = pushHistory('ram', pct);
     const gb = (b) => num(b / 1024 ** 3, 1);
-    html.push(tile('ram', 'ram', "Пам'ять", `${gb(data.ram.used)}/${gb(data.ram.total)} ГБ (${pct}%)`, h, { hot: pct >= 85 }));
+    html.push(tile('ram', "Пам'ять", `${gb(data.ram.used)}/${gb(data.ram.total)} ГБ (${pct}%)`, h, { hot: pct >= 85 }));
   }
-  if (cfg.disk) {
-    for (const d of data.disks) {
-      const h = pushHistory(d.id, d.active);
-      const title = `Диск ${d.num}${d.letters ? ` (${d.letters})` : ''}`;
-      html.push(tile('disk', d.id, title, `${d.active ?? 0}%${d.kind ? ' · ' + d.kind : ''}`, h, { hot: d.active >= 85 }));
-    }
+  for (const d of data.disks) {
+    if (hidden.has(d.id)) continue;
+    const h = pushHistory(d.id, d.active);
+    const title = `Диск ${d.num}${d.letters ? ` (${d.letters})` : ''}`;
+    html.push(tile('disk', title, `${d.active ?? 0}%${d.kind ? ' · ' + d.kind : ''}`, h, { hot: d.active >= 85 }));
   }
-  if (cfg.net) {
-    for (const n of data.nets) {
-      const h = pushHistory(n.id, [n.down || 0, n.up || 0]);
-      const max = Math.max(1e5, ...h.flat());
-      html.push(tile('net', n.id, n.name, netText(n.down, n.up), h.map((x) => x[0]), { max, second: h.map((x) => x[1]) }));
-    }
+  for (const n of data.nets) {
+    if (hidden.has(n.id)) continue;
+    const h = pushHistory(n.id, [n.down || 0, n.up || 0]);
+    const max = Math.max(1e5, ...h.flat());
+    html.push(tile('net', n.name, netText(n.down, n.up), h.map((x) => x[0]), { max, second: h.map((x) => x[1]) }));
   }
-  if (cfg.gpu) {
-    for (const g of data.gpus) {
-      const h = pushHistory(g.id, g.pct);
-      html.push(tile('gpu', g.id, g.name, `${g.pct}% · відеокарта`, h, { hot: g.pct >= 85 }));
-    }
+  for (const g of data.gpus) {
+    if (hidden.has(g.id)) continue;
+    const h = pushHistory(g.id, g.pct);
+    html.push(tile('gpu', g.name, `${g.pct}% · відеокарта`, h, { hot: g.pct >= 85 }));
   }
   box.innerHTML = html.join('');
   fitWindow();
@@ -337,7 +343,7 @@ function renderSys(data) {
 // Grows the window once when the panel would squeeze the map (map is ~0.68 as tall as wide).
 let fittedFor = 0;
 function fitWindow() {
-  const extra = $('sys').offsetHeight + $('status').offsetHeight;
+  const extra = Math.ceil($('sys').getBoundingClientRect().height + $('status').getBoundingClientRect().height);
   if (!extra || extra === fittedFor) return;
   fittedFor = extra;
   const need = Math.ceil(innerWidth * 0.68 + extra);

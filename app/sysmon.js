@@ -104,4 +104,19 @@ function sample() {
   };
 }
 
-module.exports = { sample };
+// Cells available on this PC, for the settings list: [{ id, group, title }].
+function items(s) {
+  return [
+    { id: 'cpu', group: 'Процесор', title: 'ЦП' },
+    { id: 'ram', group: "Пам'ять", title: "Оперативна пам'ять" },
+    ...s.disks.map((d) => ({
+      id: d.id,
+      group: 'Диски',
+      title: `Диск ${d.num}${d.letters ? ` (${d.letters})` : ''}${d.kind ? ' · ' + d.kind : ''}`,
+    })),
+    ...s.nets.map((n) => ({ id: n.id, group: 'Мережа', title: n.name })),
+    ...s.gpus.map((g) => ({ id: g.id, group: 'Відеокарти', title: g.full })),
+  ];
+}
+
+module.exports = { sample, items };

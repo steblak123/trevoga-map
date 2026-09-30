@@ -35,6 +35,9 @@
     .city { display: flex; align-items: center; gap: 8px; padding: 6px 2px 6px 20px; border-bottom: 1px solid #1f2836; cursor: pointer; }
     #chosen { margin-top: 6px; font-size: 13px; color: var(--accent); min-height: 18px; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+    #sysItems .group { margin-top: 6px; color: var(--muted); font-size: 12px; }
+    #sysItems .group:first-child { margin-top: 2px; }
+    #sysItems.off { opacity: 0.45; pointer-events: none; }
   </style>
 </head>
 <body>
@@ -77,13 +80,7 @@
     <section>
       <h2>Навантаження ПК</h2>
       <label class="row"><input type="checkbox" id="sysShow"> Показувати під картою (як у Диспетчері завдань)</label>
-      <div class="grid2" style="padding-left:24px">
-        <label class="row"><input type="checkbox" data-sys="cpu"> Процесор</label>
-        <label class="row"><input type="checkbox" data-sys="ram"> Пам'ять</label>
-        <label class="row"><input type="checkbox" data-sys="disk"> Диски</label>
-        <label class="row"><input type="checkbox" data-sys="net"> Мережа</label>
-        <label class="row"><input type="checkbox" data-sys="gpu"> Відеокарти</label>
-      </div>
+      <div id="sysItems" style="padding-left:24px"></div>
     </section>
 
     <section>

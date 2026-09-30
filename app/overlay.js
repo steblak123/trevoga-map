@@ -89,17 +89,12 @@ function render(p) {
     hideTimer = setTimeout(() => window.bridge.hideOverlay(), 10000);
   }
   bar.style.display = p.visible ? 'block' : 'none';
+  // The window is sized to the banner (plus room for the pulsing ring), so it never covers other windows.
+  if (p.visible) {
+    requestAnimationFrame(() => window.bridge.overlaySize({ width: bar.offsetWidth + 28, height: bar.offsetHeight + 28 }));
+  }
   if (p.sound) (p.kind === 'alert' ? playSiren : playChime)(p.volume ?? 0.7);
 }
 
 window.bridge.onOverlay(render);
 document.getElementById('close').addEventListener('click', () => window.bridge.hideOverlay());
-
-// Click-through everywhere except the banner itself.
-let ignoring = true;
-document.addEventListener('mousemove', (e) => {
-  const over = bar.style.display !== 'none' && bar.contains(e.target);
-  if (over === !ignoring) return;
-  ignoring = !over;
-  window.bridge.overlayIgnore(ignoring);
-});

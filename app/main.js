@@ -24,7 +24,7 @@ const DEFAULTS = {
   opacity: 1,
   locked: false,
   bounds: null,
-  sys: { show: true, cpu: true, ram: true, disk: true, net: true, gpu: true }, // PC load panel under the map
+  sys: { show: true, hidden: [] }, // PC load panel under the map; hidden: ids of cells turned off
 };
 
 // Default token baked in at build time (see build/prepare-token.js); a user token in settings wins.
@@ -57,6 +57,7 @@ let pollTimer = null;
 let tick = 0;
 let prevStatus = null; // Map uid -> 'A' | 'P' | 'N' for selected regions
 let overlayState = null;
+let lastSys = null; // latest PC load sample
 
 const MAP_JSON = fs.readFileSync(path.join(__dirname, 'assets', 'map.json'), 'utf8');
 const RAION_NAMES = Object.fromEntries(
@@ -516,7 +517,8 @@ function ensureOverlay() {
     backgroundColor: '#00000000',
     resizable: false,
     skipTaskbar: true,
-    focusable: false,
+    // Must stay focusable: a non-activatable window never delivers clicks to the page,
+    // so the close button would not work. It is still shown with showInactive().
     hasShadow: false,
     alwaysOnTop: true,
     show: false,
@@ -528,7 +530,6 @@ function ensureOverlay() {
     },
   });
   overlay.setAlwaysOnTop(true, 'screen-saver');
-  overlay.setIgnoreMouseEvents(true, { forward: true });
   overlay.loadFile(path.join(__dirname, 'overlay.html'));
   overlay.on('closed', () => (overlay = null));
   return overlay;
@@ -541,12 +542,8 @@ function showOverlay(payload) {
   if (!visible && !soundOn) return;
   const win = ensureOverlay();
   overlayState = payload;
-  const send = () => {
-    const wa = screen.getPrimaryDisplay().workArea;
-    win.setBounds({ x: Math.round(wa.x + (wa.width - 680) / 2), y: wa.y + 12, width: 680, height: 220 });
-    win.webContents.send('overlay', { ...payload, sound: soundOn, volume: settings.volume, visible });
-    if (visible) win.showInactive();
-  };
+  // The page reports the banner size back ('overlay-size'); the window is shown at that size.
+  const send = () => win.webContents.send('overlay', { ...payload, sound: soundOn, volume: settings.volume, visible });
   if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send);
   else send();
 }
@@ -672,12 +669,23 @@ ipcMain.handle('set-settings', (_e, patch) => {
   return publicSettings();
 });
 ipcMain.handle('get-state', () => state);
+ipcMain.handle('sys-items', () => {
+  if (!lastSys) lastSys = sysmon.sample();
+  return sysmon.items(lastSys);
+});
 ipcMain.handle('map-data', () => JSON.parse(MAP_JSON));
 ipcMain.on('open-settings', openSettings);
 ipcMain.on('want-history', (_e, uid) => wantHistory(Number(uid)));
 ipcMain.on('test-alert', testAlert);
 ipcMain.on('overlay-hide', hideOverlay);
-ipcMain.on('overlay-ignore', (_e, ignore) => overlay && overlay.setIgnoreMouseEvents(ignore, { forward: true }));
+// The overlay window is exactly the banner's size, so it never has to pass clicks through.
+ipcMain.on('overlay-size', (_e, { width, height }) => {
+  if (!overlay || overlay.isDestroyed() || !overlayState) return;
+  const wa = screen.getPrimaryDisplay().workArea;
+  const w = Math.min(Math.ceil(width), wa.width);
+  overlay.setBounds({ x: Math.round(wa.x + (wa.width - w) / 2), y: wa.y + 8, width: w, height: Math.ceil(height) });
+  if (!overlay.isVisible()) overlay.showInactive();
+});
 ipcMain.on('set-ignore', (_e, ignore) => widget && widget.setIgnoreMouseEvents(ignore, { forward: true }));
 ipcMain.on('context-menu', () => tray && tray.popUpContextMenu(buildMenu()));
 ipcMain.on('drag-start', () => {
@@ -718,7 +726,8 @@ if (!app.requestSingleInstanceLock()) {
     setInterval(() => queueHistory(), 15 * 60000);
     setInterval(() => {
       if (!settings.sys.show || !widget || widget.isDestroyed()) return;
-      widget.webContents.send('sys', sysmon.sample());
+      lastSys = sysmon.sample();
+      widget.webContents.send('sys', lastSys);
     }, 2000);
     // Keep the bottom layer at the bottom, and re-pin if Explorer recreated the desktop.
     setInterval(() => {
