@@ -22,7 +22,10 @@
   const ROAD_ZOOM = { p: 1.7, s: 3.2, t: 7 };
   const PLACE_ZOOM = [1.25, 1.6, 2.3, 3.4, 5, 7, 13];
   const RAION_ZOOM = 1.8;
-  const LABEL_PX = 11.5; // town name size at the widget's normal scale
+  // Name sizes in screen pixels (not in map units: on a small widget those came out 8 px), by rank:
+  // big cities, towns, small towns, villages; raion names. They grow a little as you zoom in.
+  const NAME_PX = [14.5, 14, 13, 13, 12.5, 12, 11.5];
+  const RAION_PX = 10.5;
   const MAX_NAMES = 220;
   // Satellite level by screen pixels per map unit: L0 up to 2.6, L1 up to 5.2, L2 up to 9, then online tiles.
   const LEVEL_PX = [2.6, 5.2];
@@ -273,7 +276,8 @@
     }
   }
 
-  // Sizes are in map units divided by the zoom, like the region names: constant while zooming.
+  // Names are sized in screen pixels and grow with the zoom (up to ×1.45), so they stay readable however
+  // small the widget is; in map units that is px / ctm.a.
   function placeNames(view, zoom, ctm) {
     names.textContent = '';
     if (!labels || !ctm) return;
@@ -285,8 +289,8 @@
     }
     const hit = (a) => boxes.some((b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]);
     const [vx, vy, vw, vh] = view;
-    const unit = LABEL_PX / zoom; // font size in map units
-    const px = unit * ctm.a; // ... and on screen
+    const grow = Math.min(1.45, 1 + 0.12 * Math.log2(Math.max(1, zoom)));
+    const u = (px) => (px / ctm.a).toFixed(4); // screen px -> map units
     let shown = 0;
     for (const l of labels) {
       if (zoom < (l.raion ? RAION_ZOOM : PLACE_ZOOM[l.rank])) continue;
@@ -294,23 +298,24 @@
       const sx = ctm.a * l.x + ctm.e;
       const sy = ctm.d * l.y + ctm.f;
       if (l.raion) {
-        const f = 0.82;
-        const w = l.name.length * px * f * 0.7 + 4;
-        const box = [sx - w / 2, sy - px * f * 0.6, sx + w / 2, sy + px * f * 0.6];
+        const px = RAION_PX * Math.min(1.3, grow);
+        const w = l.name.length * px * 0.72 + 4;
+        const box = [sx - w / 2, sy - px * 0.62, sx + w / 2, sy + px * 0.62];
         if (box[0] < 0 || box[2] > innerWidth || hit(box)) continue;
         boxes.push(box);
-        const t = el('text', { x: l.x, y: l.y, class: 'nb-raion' + (mine.has(l.uid) ? ' mine' : ''), 'font-size': (unit * f).toFixed(3), 'letter-spacing': ((unit * f) / 9).toFixed(3) });
+        const t = el('text', { x: l.x, y: l.y, class: 'nb-raion' + (mine.has(l.uid) ? ' mine' : ''), 'font-size': u(px), 'letter-spacing': u(px / 9), 'stroke-width': u(3) });
         t.textContent = l.name;
         names.appendChild(t);
       } else {
         const big = l.rank <= 1;
-        const f = big ? 1.1 : l.rank === 6 ? 0.88 : 1;
-        const box = [sx - 4, sy - px * f * 0.72, sx + 6 + l.name.length * px * f * (big ? 0.58 : 0.52), sy + px * f * 0.5];
+        const px = NAME_PX[l.rank] * grow;
+        const dot = (big ? 3.4 : l.rank === 6 ? 2.2 : 2.8) * Math.min(1.25, grow);
+        const box = [sx - dot - 2, sy - px * 0.72, sx + dot + 4 + l.name.length * px * (big ? 0.58 : 0.53), sy + px * 0.52];
         if (box[2] > innerWidth || hit(box)) continue;
         boxes.push(box);
         const g = el('g', { class: `nb-place r${l.rank}` });
-        g.appendChild(el('circle', { cx: l.x, cy: l.y, r: (((big ? 2.7 : l.rank === 6 ? 1.6 : 2.1) * unit) / LABEL_PX).toFixed(3) }));
-        const t = el('text', { x: l.x + (5 * unit) / LABEL_PX, y: l.y, 'font-size': (unit * f).toFixed(3) });
+        g.appendChild(el('circle', { cx: l.x, cy: l.y, r: u(dot), 'stroke-width': u(1.2) }));
+        const t = el('text', { x: +l.x + +u(dot + 3.5), y: l.y, 'font-size': u(px), 'stroke-width': u(3.2) });
         t.textContent = l.name;
         g.appendChild(t);
         names.appendChild(g);

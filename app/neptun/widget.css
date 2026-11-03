@@ -439,8 +439,7 @@ body.nep-base-dark #nep-base-map :is(.nb-cm, .nb-cp, .nb-cs, .nb-ct) { stroke: r
   font-weight: 500;
   dominant-baseline: middle;
   paint-order: stroke;
-  stroke: rgba(6, 10, 16, 0.88);
-  stroke-width: calc(2.6px / var(--nep-zoom, 1));
+  stroke: rgba(6, 10, 16, 0.9);
   stroke-linejoin: round;
 }
 #nep-base-names .r0 text, #nep-base-names .r1 text { fill: #fff; font-weight: 600; }
@@ -448,7 +447,7 @@ body.nep-base-dark #nep-base-map :is(.nb-cm, .nb-cp, .nb-cs, .nb-ct) { stroke: r
 #nep-base-names .r6 circle { fill: #9aa7b8; }
 #nep-base-names .nb-raion { fill: rgba(176, 194, 216, 0.6); font-weight: 600; text-anchor: middle; }
 #nep-base-names .nb-raion.mine { fill: #7fdcff; }
-#nep-base-names circle { fill: #e8edf3; stroke: rgba(6, 10, 16, 0.9); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+#nep-base-names circle { fill: #e8edf3; stroke: rgba(6, 10, 16, 0.9); }
 #nep-base-names .r0 circle { fill: #ffd36e; }
 body.no-labels #nep-base-names { display: none; }
 .nep-targets .h-foot { overflow: hidden; }

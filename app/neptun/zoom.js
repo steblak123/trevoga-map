@@ -4,7 +4,7 @@
 // Other scripts listen for the "nep-zoom" event on #map; "nep-zoom-mine" asks to show the selected regions.
 (function () {
   const svg = document.getElementById('map');
-  const MAX = 40; // the most the map can be enlarged: a 30–40 km wide view
+  const MAX = 100; // the most the map can be enlarged: a view about 13 km wide
   const STEP = 1.8; // one button press
   let anim = 0;
   let base = null; // [x, y, w, h]: the whole-map viewBox set by widget.js
