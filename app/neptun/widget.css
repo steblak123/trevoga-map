@@ -271,7 +271,11 @@ body.nep-hud #status { display: none; } /* the region card replaces the status l
 #nep-tip ul { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 #nep-tip li { display: grid; grid-template-columns: 13px minmax(0, 1fr) auto; align-items: center; gap: 5px; }
 #nep-tip li > .h-ico { width: 13px; height: 13px; color: var(--c); }
-#nep-tip li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#nep-tip { max-width: 300px; }
+#nep-tip li { padding: 2px 0; }
+#nep-tip li + li { border-top: 1px dashed var(--h-line); }
+#nep-tip li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+#nep-tip li span small { display: block; font-weight: 400; font-size: 10px; color: var(--h-steel); overflow: hidden; text-overflow: ellipsis; }
 
 @media (prefers-reduced-motion: reduce) {
   .nep-tile, .nep-region, .nep-targets, #sys > .tile { transition: none; }

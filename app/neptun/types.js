@@ -56,13 +56,14 @@
     return TYPES[type] || TYPES.unknown;
   }
 
-  // NEPTUN has one type "uav" for both kinds of Shahed and sometimes names an FPV only in the title,
-  // so the kind used for icons, counts and limits also looks at the title.
+  // NEPTUN has one type "uav" for both kinds of Shahed. Its own map knows a jet one by subtype "jet",
+  // which the open API does not send yet; the title is checked too ("Реактивний шахед"), and an FPV
+  // is sometimes named only in the title.
   const JET = /реактивн|jet|герань-3|shahed-23|шахед-23/i;
   const FPV = /fpv|фпв/i;
   function kindOf(t) {
     if (t.type === 'fpv' || (t.type === 'uav' && FPV.test(t.title || ''))) return 'fpv';
-    if (t.type === 'uav' && JET.test(t.title || '')) return 'jet';
+    if (t.type === 'uav' && (t.subtype === 'jet' || JET.test(t.title || ''))) return 'jet';
     return TYPES[t.type] ? t.type : 'unknown';
   }
 

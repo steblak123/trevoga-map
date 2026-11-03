@@ -188,6 +188,15 @@
     return t.locality || shortName(t.district || t.region || '');
   }
 
+  // Oblast and raion in a few words: "Харківська обл. · Чугуївський р-н", "у бік Одеської області".
+  function areaText(t) {
+    if (seaOf(t)) return t.region ? `у бік ${toward(t.region)}` : 'над морем';
+    const parts = [];
+    if (t.region) parts.push(shortName(t.region));
+    if (t.district && t.district !== t.region) parts.push(shortName(t.district));
+    return parts.join(' · ');
+  }
+
   // For tooltips: place plus region.
   function placeHtml(t) {
     if (t.areaOnly) return `<b>${esc(t.region)}</b>`;
@@ -327,7 +336,7 @@
       : placeBadge(placeShort(t)) + distBadge(near) + courseBadge(p) + etaBadge(etaMin(t, near));
     return (
       `<button class="${cls}" data-id="${esc(t.id)}" style="--c:${metaOf(t).color}">${typeChip(kindOf(t))}` +
-      `<span class="h-ent-name">${nameOf(t)}</span>${statusBadge(statusKey(near))}<span class="h-ent-badges">${badges}</span></button>`
+      `<span class="h-ent-name">${nameOf(t)}<small>${esc(areaText(t))}</small></span>${statusBadge(statusKey(near))}<span class="h-ent-badges">${badges}</span></button>`
     );
   }
 
@@ -1038,7 +1047,10 @@
       .slice(0, 10)
       .map((t) => {
         const near = nearOf(t, now);
-        return `<li style="--c:${metaOf(t).color}">${typeIcon(kindOf(t))}<span>${esc(t.title || metaOf(t).short)}${t.count > 1 ? ` ×${t.count}` : ''}</span>${distBadge(near)}</li>`;
+        return (
+          `<li style="--c:${metaOf(t).color}">${typeIcon(kindOf(t))}` +
+          `<span>${esc(t.title || metaOf(t).short)}${t.count > 1 ? ` ×${t.count}` : ''}<small>${esc(areaText(t))}</small></span>${distBadge(near)}</li>`
+        );
       })
       .join('');
     const more = list.length > 10 ? `<div class="tt-s">+${list.length - 10}</div>` : '';
