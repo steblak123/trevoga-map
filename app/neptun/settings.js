@@ -1,10 +1,34 @@
 // "Цілі на карті" section of settings.html. The page needs only
 //   <script src="neptun/settings.js"></script>  after settings.js
 // Options are kept in settings.json under
-//   "neptun": { markers, panel, hideFpv, alert, alertKm, alertSound, cardSide }.
+//   "neptun": { markers, panel, hideFpv, alert, alertKm, alertSound, cardSide, basemap }.
 (function () {
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left' };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', basemap: 'none' };
   const RADII = [5, 10, 20, 50];
+  const BASEMAPS = [
+    ['none', 'Звичайна'],
+    ['map', 'Карта з дорогами'],
+    ['sat', 'Супутник'],
+    ['hybrid', 'Супутник і дороги'],
+  ];
+  // "Карта": the offline layer under the regions (basemap.js); it works with the targets off too.
+  const mapSection = document.createElement('section');
+  mapSection.innerHTML = `
+    <h2>Карта</h2>
+    <div class="nep-bm">${BASEMAPS.map(([v, t]) => `<label class="nep-bm-${v}"><input type="radio" name="nep-basemap" value="${v}"><span>${t}</span></label>`).join('')}</div>
+    <div class="hint">Працює без інтернету. Назви міст з’являються при наближенні.</div>`;
+  const bmCss = document.createElement('style');
+  bmCss.textContent = `
+    .nep-bm { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 6px; }
+    .nep-bm label { position: relative; display: flex; align-items: flex-end; height: 58px; padding: 6px 7px; border-radius: 8px;
+      border: 1px solid var(--line); cursor: pointer; font-size: 12px; font-weight: 600; text-shadow: 0 1px 2px #000; overflow: hidden; }
+    .nep-bm input { position: absolute; opacity: 0; }
+    .nep-bm label:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 10px rgba(95,211,255,.25); }
+    .nep-bm-none { background: linear-gradient(135deg, #1a2433, #121a26); }
+    .nep-bm-map { background: linear-gradient(160deg, transparent 46%, #ffc45c 47% 50%, transparent 51%), linear-gradient(60deg, transparent 60%, #eadcb0 61% 62.5%, transparent 63.5%), radial-gradient(circle at 75% 30%, #1e548c 0 14%, transparent 15%), #182231; }
+    .nep-bm-sat { background: radial-gradient(circle at 30% 30%, #4b6b3a, transparent 55%), radial-gradient(circle at 80% 70%, #7a6a4a, transparent 50%), linear-gradient(135deg, #2f4a2a, #3b3a2a); }
+    .nep-bm-hybrid { background: linear-gradient(160deg, transparent 46%, #ffd36e 47% 50%, transparent 51%), radial-gradient(circle at 30% 30%, #4b6b3a, transparent 55%), radial-gradient(circle at 80% 70%, #7a6a4a, transparent 50%), linear-gradient(135deg, #2f4a2a, #3b3a2a); }`;
+  document.head.appendChild(bmCss);
   const section = document.createElement('section');
   section.innerHTML = `
     <h2>Цілі на карті</h2>
@@ -27,10 +51,12 @@
     </div>
     <div class="hint">Під картою — вікно з цілями біля ваших районів (клік по цілі показує її тут же) і плитки з
       кількістю цілей. Сповіщення — плашка на 2 секунди в правому верхньому куті; гучність — як у розділі
-      «Сповіщення». Дрони без курсу на карті видно лише поруч з вашими районами; решту — у плитках.</div>`;
+      «Сповіщення». Шахеди без курсу на карті видно лише поруч з вашими районами; решту — у плитках.</div>`;
   const token = document.getElementById('token');
   const before = token && token.closest('section');
   document.querySelector('main').insertBefore(section, before || null);
+  document.querySelector('main').insertBefore(mapSection, section);
+  const basemaps = [...mapSection.querySelectorAll('input[name=nep-basemap]')];
 
   const q = (id) => section.querySelector('#nep-' + id);
   const checks = ['markers', 'panel', 'hideFpv', 'alert', 'alertSound'];
@@ -53,6 +79,7 @@
     for (const id of checks) q(id).checked = !!current[id];
     km.value = String(RADII.includes(current.alertKm) ? current.alertKm : DEFAULTS.alertKm);
     for (const r of sides) r.checked = r.value === current.cardSide;
+    for (const r of basemaps) r.checked = r.value === current.basemap;
     sync();
   }
 
@@ -65,6 +92,7 @@
   for (const id of checks) q(id).addEventListener('change', (e) => save({ [id]: e.target.checked }));
   km.addEventListener('change', () => save({ alertKm: Number(km.value) }));
   for (const r of sides) r.addEventListener('change', () => save({ cardSide: r.value }));
+  for (const r of basemaps) r.addEventListener('change', () => save({ basemap: r.value }));
 
   q('test').addEventListener('click', () => {
     if (!window.bridge.neptun) return;

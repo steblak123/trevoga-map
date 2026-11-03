@@ -249,3 +249,7 @@
 }
 .h-sep::after { content: ''; flex: 1; height: 1px; background: var(--h-line); }
 .h-sep + .h-ent { border-top: 0; }
+
+/* Shahed type: jet / plain */
+.h-b.jet { --bc: #ff5a3c; font-weight: 700; }
+.h-b.plain { --bc: #ffb36b; }

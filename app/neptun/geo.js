@@ -47,6 +47,16 @@
     return [p2 / RAD, ((l2 / RAD + 540) % 360) - 180];
   }
 
+  // Initial great-circle bearing from point 1 to point 2, degrees clockwise from north.
+  function bearing(lat1, lon1, lat2, lon2) {
+    const p1 = lat1 * RAD;
+    const p2 = lat2 * RAD;
+    const dl = (lon2 - lon1) * RAD;
+    const y = Math.sin(dl) * Math.cos(p2);
+    const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+    return ((Math.atan2(y, x) / RAD) + 360) % 360;
+  }
+
   function distanceKm(lat1, lon1, lat2, lon2) {
     const dp = (lat2 - lat1) * RAD;
     const dl = (lon2 - lon1) * RAD;
@@ -121,7 +131,7 @@
     return best;
   }
 
-  const api = { lcc, mapProjector, dest, distanceKm, compass, pathRings, insideRings, ringsDistance };
+  const api = { lcc, mapProjector, dest, bearing, distanceKm, compass, pathRings, insideRings, ringsDistance };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.Geo = api;
 })(typeof self !== 'undefined' ? self : this);

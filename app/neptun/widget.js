@@ -5,7 +5,7 @@
 // Talks to widget.js only through the DOM (#map, #wrap, #status, #sys) and window.bridge.
 (function () {
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const { TYPES, ORDER, typeMeta, kindOf, predict } = window.NeptunTypes;
+  const { TYPES, ORDER, typeMeta, kindOf, classify, predict } = window.NeptunTypes;
   const Geo = window.Geo;
   const R = window.Regions;
   const bridge = window.bridge;
@@ -23,7 +23,9 @@
   const COMPACT_ROWS = 6; // …more get one line each
   const HIST_EVERY = 30000; // count tiles: one sample per 30 s…
   const HIST_POINTS = 60; // …for the last 30 minutes
-  const DRONES = new Set(['uav', 'jet', 'recon']);
+  // Shaheds without a course are drawn only near your regions (as on the NEPTUN map); reconnaissance
+  // drones usually circle without one, so they are always drawn.
+  const SHAHEDS = new Set(['uav', 'jet']);
   const FAST = new Set(['missile', 'ballistic', 'jet', 'kab', 'mig31k']);
   // Direction sector length by kind: [km at most, km when the speed is unknown]; missiles reach far ahead.
   const AHEAD = { missile: [160, 110], ballistic: [140, 90], jet: [120, 80], mig31k: [100, 70], kab: [45, 30] };
@@ -48,6 +50,18 @@
   const $ = (id) => document.getElementById(id);
   const svg = $('map');
   const client = new window.NeptunClient();
+  // Jet or plain Shahed from the channel posts (intel.js), cached per track update.
+  const intel = window.NeptunIntel ? new window.NeptunIntel() : null;
+  const hintCache = new Map(); // track id -> { v, u, mode, at }
+  window.NeptunTypes.setHint((t) => {
+    if (!intel) return null;
+    const c = hintCache.get(t.id);
+    if (c && c.v === intel.version && c.u === t.updatedAt) return c.mode;
+    if (hintCache.size > 3000) hintCache.clear();
+    const a = intel.about(t);
+    hintCache.set(t.id, { v: intel.version, u: t.updatedAt, mode: a ? a.mode : null, at: a ? a.at : null });
+    return a ? a.mode : null;
+  });
 
   let opts = { ...DEFAULTS, markers: false }; // applySettings() starts the client if enabled
   let volume = 0.7;
@@ -76,8 +90,9 @@
   const areaLayer = svgEl('g', { id: 'nep-area' });
   const trackLayer = svgEl('g', { id: 'nep-tracks' });
   const selLayer = svgEl('g', { id: 'nep-sel' });
+  const leadLayer = svgEl('g', { id: 'nep-leads' }); // lines from fanned-out markers to their true spot
   const markerLayer = svgEl('g', { id: 'nep-markers' });
-  layer.append(areaLayer, trackLayer, selLayer, markerLayer);
+  layer.append(areaLayer, trackLayer, selLayer, leadLayer, markerLayer);
   svg.appendChild(layer);
 
   // Under the map, above the PC load tiles: the dock (region card + targets panel) and the count tiles.
@@ -95,9 +110,22 @@
   const tip = document.createElement('div');
   tip.id = 'nep-tip';
   $('wrap').appendChild(tip);
+  // Links to the data sources: the APIs' and the map data licences ask for a visible one next to the map.
+  // Only the sources of what is on screen are shown (basemap.js sets the nep-base-* body classes).
+  const credit = document.createElement('div');
+  credit.id = 'nep-credit';
+  credit.innerHTML = [
+    ['', 'https://alerts.in.ua/', 'alerts.in.ua'],
+    ['nep-src', 'https://neptun.in.ua/', 'NEPTUN'],
+    ['nep-osm', 'https://www.openstreetmap.org/copyright', '© OpenStreetMap'],
+    ['nep-eox', 'https://s2maps.eu/', 'Sentinel-2 · EOX'],
+  ]
+    .map(([cls, href, text]) => `<a class="ui ${cls}" href="${href}" target="_blank">${text}</a>`)
+    .join('');
+  $('wrap').appendChild(credit);
 
   // Clicks on our elements must not drag the widget or open the settings (widget.js listens on document).
-  for (const el of [dock, tilesEl, markerLayer]) {
+  for (const el of [dock, tilesEl, markerLayer, credit]) {
     el.addEventListener('mousedown', (e) => e.stopPropagation());
     el.addEventListener('dblclick', (e) => e.stopPropagation());
   }
@@ -160,7 +188,17 @@
 
   const typeIcon = (kind, cls = 'h-ico') => `<svg class="${cls}" viewBox="-12 -12 24 24">${typeMeta(kind).icon}</svg>`;
   const typeChip = (kind) => `<span class="h-ent-ico" style="--c:${typeMeta(kind).color}">${typeIcon(kind)}</span>`;
-  const nameOf = (t) => esc(t.title || metaOf(t).short) + (t.count > 1 ? `<em>×${t.count}</em>` : '');
+  // A target's name: "Реактивний шахед" or "Шахед" (the API calls both "БпЛА", a group "Група БпЛА (2+)"),
+  // in the plural for a group; other targets keep their title.
+  function nameText(t) {
+    const kind = kindOf(t);
+    const title = (t.title || '').trim();
+    const many = t.count > 1 || /груп|шахеди/i.test(title);
+    if (kind === 'jet') return many ? 'Реактивні шахеди' : 'Реактивний шахед';
+    if (kind === 'uav') return !title || /^(бпла|шахеди?|uav|група бпла.*)$/i.test(title) ? (many ? 'Шахеди' : 'Шахед') : title;
+    return title || metaOf(t).short;
+  }
+  const nameOf = (t) => esc(nameText(t)) + (t.count > 1 ? `<em>×${t.count}</em>` : '');
 
   // Over the sea: a report with no place of its own whose point is off the Ukrainian land.
   const seaCache = new Map();
@@ -197,6 +235,38 @@
     return parts.join(' · ');
   }
 
+  // What lies at a point: { kind: 'raion', name } over Ukraine, or 'sea' / 'abroad'.
+  function areaAt(lat, lon) {
+    const [x, y] = project(lat, lon);
+    const r = land.find((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1 && Geo.insideRings(r.rings, x, y));
+    if (r) return { kind: 'raion', name: r.name };
+    const sea = (lat > 45.25 && lat < 47.15 && lon > 34.8 && lon < 38.7) || (lat > 41 && lat < 46.75 && lon > 27.3 && lon < 41.9);
+    return { kind: sea ? 'sea' : 'abroad' };
+  }
+
+  // Where a target came from: the first point of its reported trail, or, with only a course, a point
+  // some way back along it (est). { lat, lon, est, bearing (from the target to it), where }.
+  function originOf(t, now) {
+    if (t.areaOnly || !project) return null;
+    const p = predict(t, now);
+    const trail = (Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon));
+    let o = null;
+    if (trail.length && Geo.distanceKm(trail[0].lat, trail[0].lon, p.lat, p.lon) > 3) o = { lat: trail[0].lat, lon: trail[0].lon, est: false };
+    else if (Geo.distanceKm(t.lat, t.lon, p.lat, p.lon) > 3) o = { lat: t.lat, lon: t.lon, est: false };
+    else if (p.heading != null) {
+      const speed = t.velocity && t.velocity.speedKmh > 0 ? t.velocity.speedKmh : 0;
+      const km = speed ? Math.min(80, Math.max(25, speed / 4)) : 40; // about 15 minutes back
+      const [lat, lon] = Geo.dest(p.lat, p.lon, (p.heading + 180) % 360, km);
+      o = { lat, lon, est: true };
+    }
+    if (!o) return null;
+    o.bearing = Geo.bearing(p.lat, p.lon, o.lat, o.lon);
+    o.where = areaAt(o.lat, o.lon);
+    return o;
+  }
+
+  const originText = (o) => (o.where.kind === 'raion' ? shortName(o.where.name) : o.where.kind === 'sea' ? 'з моря' : 'з-за кордону');
+
   // For tooltips: place plus region.
   function placeHtml(t) {
     if (t.areaOnly) return `<b>${esc(t.region)}</b>`;
@@ -230,9 +300,9 @@
   const visible = (t) => !(opts.hideFpv && kindOf(t) === 'fpv');
   const targets = () => client.list().filter(visible);
   const pointTargets = () => targets().filter((t) => !t.areaOnly);
-  const courseless = (t, now) => DRONES.has(kindOf(t)) && predict(t, now).heading == null;
+  const courseless = (t, now) => SHAHEDS.has(kindOf(t)) && predict(t, now).heading == null;
 
-  // Drones without a course are not drawn unless close to your regions (or picked): they are in the tiles.
+  // Shaheds without a course are not drawn unless close to your regions (or picked): they are in the tiles.
   function onMap(t, now) {
     if (t.id === selected || (group && group.includes(t.id)) || !courseless(t, now)) return true;
     const near = nearOf(t, now);
@@ -321,7 +391,13 @@
     return `<span class="h-b dist">${ico('dist')}${Math.round(near.km)}<small>км</small></span>`;
   };
   const placeBadge = (text) => `<span class="h-b place">${ico('pin')}${esc(text)}</span>`;
-  const courseBadge = (p) => (p.heading == null ? '' : `<span class="h-b dir">${arrowIco(p.angle == null ? p.heading : p.angle)}${compass8(p.heading)}</span>`);
+  // "з Пн-Сх → Пд-Зх": where it comes from and where it heads.
+  const courseBadge = (p, o) => {
+    if (p.heading == null && !o) return '';
+    const from = o ? `з ${compass8(o.bearing)}` : '';
+    if (p.heading == null) return `<span class="h-b dir">${from}</span>`;
+    return `<span class="h-b dir">${arrowIco(p.angle == null ? p.heading : p.angle)}${from ? `${from} → ` : ''}${compass8(p.heading)}</span>`;
+  };
   const etaBadge = (min) => (min == null ? '' : `<span class="h-b eta">${ico('clock')}${min}<small>хв</small></span>`);
   const statusBadge = (key) => `<span class="h-b h-st ${key}">${STATUS[key]}</span>`;
 
@@ -333,7 +409,7 @@
     const cls = `h-ent ui${compact ? ' compact' : ''}${risk == null ? '' : ' r' + risk}${fresh ? ' fresh' : ''}${t.id === selected ? ' sel' : ''}`;
     const badges = compact
       ? distBadge(near)
-      : placeBadge(placeShort(t)) + distBadge(near) + courseBadge(p) + etaBadge(etaMin(t, near));
+      : placeBadge(placeShort(t)) + distBadge(near) + courseBadge(p, originOf(t, now)) + etaBadge(etaMin(t, near));
     return (
       `<button class="${cls}" data-id="${esc(t.id)}" style="--c:${metaOf(t).color}">${typeChip(kindOf(t))}` +
       `<span class="h-ent-name">${nameOf(t)}<small>${esc(areaText(t))}</small></span>${statusBadge(statusKey(near))}<span class="h-ent-badges">${badges}</span></button>`
@@ -392,14 +468,47 @@
         sel = [it];
         continue;
       }
-      const g = groups.find((g) => g[0].edge === it.edge && Math.hypot(g[0].x - it.x, g[0].y - it.y) < limit);
+      // one "×N" marker only for targets that share a course; the rest are fanned out below
+      const g = groups.find((g) => g[0].edge === it.edge && Math.hypot(g[0].x - it.x, g[0].y - it.y) < limit && g.every((m) => sameCourse(m, it)));
       if (g) g.push(it);
       else groups.push([it]);
     }
     // Drawing order: lower severity first, the selected target last (on top).
     const units = groups.map(unitOf).reverse();
     if (sel) units.push(unitOf(sel));
+    fanOut(units);
     return units;
+  }
+
+  const sameCourse = (a, b) => (a.p.angle == null) === (b.p.angle == null) && (a.p.angle == null || angleDiff(a.p.angle, b.p.angle) < 30);
+
+  // Markers that would sit on top of each other (different courses at one spot) are spread on a small
+  // ring around it, each on the side it flies to; a thin line leads from each to its true spot.
+  function fanOut(units) {
+    const touch = BADGE_PX * 2.2 * unitsPerPx;
+    const used = new Set();
+    for (let i = 0; i < units.length; i++) {
+      if (used.has(i)) continue;
+      const pile = [i];
+      for (let j = i + 1; j < units.length; j++) {
+        if (!used.has(j) && units[j].edge === units[i].edge && Math.hypot(units[i].x - units[j].x, units[i].y - units[j].y) < touch) pile.push(j);
+      }
+      if (pile.length < 2) continue;
+      for (const k of pile) used.add(k);
+      const cx = pile.reduce((s, k) => s + units[k].x, 0) / pile.length;
+      const cy = pile.reduce((s, k) => s + units[k].y, 0) / pile.length;
+      const r = BADGE_PX * Math.max(1.45, 0.5 * pile.length) * unitsPerPx;
+      const order = pile.map((k) => units[k]).sort((a, b) => (a.ptrAngle ?? 999) - (b.ptrAngle ?? 999));
+      const base = order[0].ptrAngle ?? 0;
+      order.forEach((u, n) => {
+        const a = ((base + (360 * n) / order.length) * Math.PI) / 180;
+        u.ax = u.x;
+        u.ay = u.y;
+        u.x = cx + r * Math.sin(a);
+        u.y = cy - r * Math.cos(a);
+        u.fanned = true;
+      });
+    }
   }
 
   function unitOf(members) {
@@ -454,6 +563,12 @@
       pool[i].el.style.display = 'none';
       pool[i].el.dataset.ids = '';
     }
+    leadLayer.textContent = '';
+    for (const u of units) {
+      if (!u.fanned) continue;
+      leadLayer.appendChild(svgEl('line', { class: 'lead', x1: u.ax.toFixed(2), y1: u.ay.toFixed(2), x2: u.x.toFixed(2), y2: u.y.toFixed(2) }));
+      leadLayer.appendChild(svgEl('circle', { class: 'spot', cx: u.ax.toFixed(2), cy: u.ay.toFixed(2), r: (1.8 * unitsPerPx).toFixed(3) }));
+    }
     drawTracks(now);
     drawSelection(now);
   }
@@ -461,6 +576,12 @@
   // Tracks are drawn only where they matter, so many targets do not turn into a mess of bands:
   // the picked target, missiles / ballistics / jets / aviation, and targets close to your regions.
   // Every other one shows its course by the pointer on its marker.
+  function showsFrom(t, now) {
+    if (t.id === selected) return true;
+    const near = nearOf(t, now);
+    return !!near && near.km <= opts.alertKm;
+  }
+
   function wantsTrack(t, now) {
     if (t.id === selected) return true;
     const kind = kindOf(t);
@@ -501,12 +622,22 @@
       for (const q of raw) if (!pts.length || Math.hypot(q[0] - pts[pts.length - 1][0], q[1] - pts[pts.length - 1][1]) > 0.3) pts.push(q);
       let len = 0;
       for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      const color = metaOf(t).color;
       if (pts.length > 1 && len * kmPerUnit > 1.5) {
         // where it came from: fades in from the first report to the position now
-        const color = metaOf(t).color;
         const stroke = fade(pts[0], pts[pts.length - 1], [[0, color, 0.15], [1, color, 1]]);
         g.appendChild(svgEl('polyline', { class: 'from', stroke, points: pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ') }));
         g.appendChild(svgEl('circle', { class: 'start', cx: pts[0][0].toFixed(2), cy: pts[0][1].toFixed(2), r: (2.2 * unitsPerPx).toFixed(3) }));
+      } else if (showsFrom(t, now)) {
+        // no reported trail: an estimate back along the course, dashed, for the picked target and
+        // every target in or near your regions
+        const o = originOf(t, now);
+        if (o) {
+          const op = project(o.lat, o.lon);
+          const stroke = fade(op, [p.x, p.y], [[0, color, 0.1], [1, color, 0.95]]);
+          g.appendChild(svgEl('line', { class: 'from est', stroke, x1: op[0].toFixed(2), y1: op[1].toFixed(2), x2: p.x.toFixed(2), y2: p.y.toFixed(2) }));
+          g.appendChild(svgEl('circle', { class: 'start est', cx: op[0].toFixed(2), cy: op[1].toFixed(2), r: (2.2 * unitsPerPx).toFixed(3) }));
+        }
       }
       if (p.heading != null) {
         const speed = t.velocity && t.velocity.speedKmh > 0 ? t.velocity.speedKmh : 0;
@@ -683,7 +814,7 @@
       items: fresh.map(({ t, near }) => ({
         id: t.id,
         type: kindOf(t),
-        title: (t.title || metaOf(t).short) + (t.count > 1 ? ` ×${t.count}` : ''),
+        title: nameText(t) + (t.count > 1 ? ` ×${t.count}` : ''),
         place: placeShort(t),
         km: Math.round(near.km),
         name: shortName(near.name),
@@ -750,7 +881,7 @@
       `<div class="h-head">${ico('region')}<span class="h-title" title="${esc(regs.map((r) => r.s.name).join(', '))}">${esc(shortName(main.s.name))}</span>${more}</div>` +
       `<div class="h-kv">` +
       `<span class="h-k">Статус</span><span class="h-v">${statusCell(main, now)}${otherAlerts ? `<span class="h-b h-st alert">+${otherAlerts}</span>` : ''}</span>` +
-      `<span class="h-k">Найближча</span><span class="h-v">${best ? `${typeChip(kindOf(best.t))}<span class="h-tname" style="--c:${metaOf(best.t).color}">${esc(best.t.title || metaOf(best.t).short)}</span>` : '<span class="h-b none">немає</span>'}</span>` +
+      `<span class="h-k">Найближча</span><span class="h-v">${best ? `${typeChip(kindOf(best.t))}<span class="h-tname" style="--c:${metaOf(best.t).color}">${esc(nameText(best.t))}</span>` : '<span class="h-b none">немає</span>'}</span>` +
       `<span class="h-k">Відстань</span><span class="h-v">${distBadge(best && best.near)}</span>` +
       `<span class="h-k">Напрямок</span><span class="h-v">${dir == null ? `<span class="h-b none">—</span>` : `<span class="h-b dir">${arrowIco(dir)}${compass8(dir)}</span>`}</span>` +
       `<span class="h-k">ETA</span><span class="h-v">${eta == null ? `<span class="h-b none">${ico('clock')}—</span>` : etaBadge(eta)}</span>` +
@@ -816,22 +947,37 @@
     else if (t.destination) note = 'Розрахункова позиція';
     else if (p.flying && p.km > 0.5) note = `За курсом +${Math.round(p.km)} км`;
     else if (t.advisory) note = 'Спостереження';
-    else if (t.status === 'stale') note = 'Давні дані';
-    const course = p.heading == null ? `<span class="h-b none">—</span>` : `<span class="h-b dir">${arrowIco(p.angle == null ? p.heading : p.angle)}${compass8(p.heading)}<small>${Math.round(p.heading)}°</small></span>`;
+    else if (t.status === 'stale') note = 'Застарілі дані';
+    const course = p.heading == null ? `<span class="h-b none">—</span>` : `<span class="h-b dir">${arrowIco(p.angle == null ? p.heading : p.angle)}на ${compass8(p.heading)}<small>${Math.round(p.heading)}°</small></span>`;
+    const o = originOf(t, now);
+    const from = o ? `<span class="h-b dir">з ${compass8(o.bearing)}</span><small>${esc(originText(o))}${o.est ? ' · оцінка' : ''}</small>` : '—';
     const eta = etaMin(t, near);
     const risk = near ? targetRisk(t, near) : 0;
+    const { kind, by } = classify(t);
+    let typeCell = '';
+    if (SHAHEDS.has(kind)) {
+      // What told the kind: a post about the place (and its time), NEPTUN's own words, the speed.
+      const h = hintCache.get(t.id);
+      const why =
+        by === 'post' && h && h.at ? `пост ${hhmm(h.at)}` : by === 'text' ? 'опис' : by === 'speed' ? `${speed} км/год` : by ? '' : 'ймовірно';
+      typeCell = `<span class="h-k">Тип</span><span class="h-v">${kind === 'jet' ? '<span class="h-b jet">Реактивний</span>' : '<span class="h-b plain">Звичайний</span>'}${why ? `<small>${why}</small>` : ''}</span>`;
+    } else {
+      typeCell = `<span class="h-k">Точність</span><span class="h-v">${t.uncertaintyKm > 0 ? `±${Math.round(t.uncertaintyKm)}<small>км</small>` : '—'}</span>`;
+    }
     targetsEl.dataset.near = risk ? '1' : '0';
     return (
-      `<div class="h-head">${typeChip(kindOf(t))}<span class="h-title" style="color:color-mix(in srgb, ${metaOf(t).color} 45%, #fff)">${nameOf(t)}</span>${statusBadge(statusKey(near))}<button class="h-x ui nep-close" title="Закрити">×</button></div>` +
+      `<div class="h-head">${typeChip(kind)}<span class="h-title" style="color:color-mix(in srgb, ${metaOf(t).color} 45%, #fff)">${nameOf(t)}</span>${statusBadge(statusKey(near))}<button class="h-x ui nep-close" title="Закрити">×</button></div>` +
       `<div class="h-kv two">` +
       `<span class="h-k">Місце</span><span class="h-v">${placeBadge(placeShort(t))}</span>` +
       `<span class="h-k">Відстань</span><span class="h-v">${distBadge(near)}</span>` +
+      `<span class="h-k">Звідки</span><span class="h-v">${from}</span>` +
       `<span class="h-k">Курс</span><span class="h-v">${course}</span>` +
       `<span class="h-k">Швидкість</span><span class="h-v">${speed ? `${speed}<small>км/год</small>` : '—'}</span>` +
       `<span class="h-k">ETA</span><span class="h-v">${eta == null ? '—' : etaBadge(eta)}</span>` +
+      typeCell +
       `<span class="h-k">Згадка</span><span class="h-v">${seen ? `${hhmm(seen)}<small>${esc(ago(seen, now))}</small>` : '—'}</span>` +
       `<span class="h-k">Джерела</span><span class="h-v">${n || '—'}${conf ? `<small>${conf}</small>` : ''}</span>` +
-      `<span class="h-k">Ризик</span><span class="h-v"><span class="h-risk l${risk}"><span class="seg"><i></i><i></i><i></i></span></span>${t.uncertaintyKm > 0 ? `<small>±${Math.round(t.uncertaintyKm)} км</small>` : ''}</span>` +
+      `<span class="h-k">Ризик</span><span class="h-v"><span class="h-risk l${risk}"><span class="seg"><i></i><i></i><i></i></span>${RISK[risk]}</span></span>` +
       `</div>` +
       (note ? `<div class="h-foot"><span class="h-b note">${esc(note)}</span></div>` : '')
     );
@@ -913,7 +1059,7 @@
     if (opts.panel) {
       const c = counts(now);
       const points = pointTargets();
-      const noCourse = points.filter((t) => courseless(t, now)).length;
+      const noCourse = points.filter((t) => !onMap(t, now)).length; // like "ще N без курсу" on the NEPTUN map
       const close = mine.length ? closeTargets(now) : [];
       putTile('total', { color: '#9fb3c8', icon: ico('radar'), label: 'Усього', value: c.total, sub: noCourse ? `${noCourse} без курсу` : '', values: series('total', c.total), data: { all: '1' } });
       used.add('total');
@@ -1049,7 +1195,7 @@
         const near = nearOf(t, now);
         return (
           `<li style="--c:${metaOf(t).color}">${typeIcon(kindOf(t))}` +
-          `<span>${esc(t.title || metaOf(t).short)}${t.count > 1 ? ` ×${t.count}` : ''}<small>${esc(areaText(t))}</small></span>${distBadge(near)}</li>`
+          `<span>${esc(nameText(t))}${t.count > 1 ? ` ×${t.count}` : ''}<small>${esc(areaText(t))}</small></span>${distBadge(near)}</li>`
         );
       })
       .join('');
@@ -1126,6 +1272,7 @@
     if (quiet) quiet = false;
     else alertEntered(entered, now);
     layer.style.display = opts.markers ? '' : 'none';
+    credit.classList.toggle('no-targets', !opts.markers);
     document.body.classList.toggle('nep-hud', opts.markers); // the region card replaces widget.js's status line
     renderMarkers(now);
     dock.hidden = !opts.markers;
@@ -1157,10 +1304,18 @@
     const zoomBar = $('nep-zoom');
     if (zoomBar) zoomBar.classList.toggle('has-mine', mine.length > 0);
     quiet = prev.markers; // a settings change re-baselines the close targets without a banner
-    if (opts.markers && !prev.markers) client.start();
-    if (!opts.markers && prev.markers) client.stop();
+    if (opts.markers && !prev.markers) {
+      client.start();
+      if (intel) intel.start();
+    }
+    if (!opts.markers && prev.markers) {
+      client.stop();
+      if (intel) intel.stop();
+    }
     renderAll();
   }
+
+  if (intel) intel.onUpdate(() => opts.markers && renderAll()); // new posts can change jet / plain
 
   client.subscribe((kind) => {
     if (kind === 'data') renderAll();
@@ -1178,7 +1333,7 @@
       const rr = Geo.pathRings(r.d);
       const xs = rr.flat().map((p) => p[0]);
       const ys = rr.flat().map((p) => p[1]);
-      return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys), rings: rr };
+      return { uid: r.uid, name: r.name, x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys), rings: rr };
     });
     if (bridge.getState) alertState = (await bridge.getState()) || {};
     // widget.js rebuilds the PC tiles every 2 s; keep their rows even.

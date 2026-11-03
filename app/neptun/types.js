@@ -37,8 +37,8 @@
     missile: { label: 'Крилаті ракети', short: 'Ракета', color: '#ff3b4f', severity: 3, horizonMin: 5, maxKm: 30 },
     ballistic: { label: 'Балістика', short: 'Балістика', color: '#e0458f', severity: 3, horizonMin: 1.5, maxKm: 20 },
     mig31k: { label: 'Авіація / МіГ-31К', short: 'МіГ-31К', color: '#9a7cff', severity: 3, horizonMin: 6, maxKm: 24 },
-    jet: { label: 'Реактивні БпЛА', short: 'Реактивний БпЛА', tile: 'Реактивні', color: '#ff5a3c', severity: 3, horizonMin: 6, maxKm: 45 },
-    uav: { label: 'БпЛА (шахеди)', short: 'БпЛА', color: '#ff8a1f', severity: 2, horizonMin: 12, maxKm: 18 },
+    jet: { label: 'Реактивні шахеди', short: 'Реактивний шахед', color: '#ff5a3c', severity: 3, horizonMin: 6, maxKm: 45 },
+    uav: { label: 'Шахеди', short: 'Шахед', color: '#ff8a1f', severity: 2, horizonMin: 12, maxKm: 18 },
     kab: { label: 'Керовані авіабомби', short: 'КАБ', color: '#ff6a2b', severity: 2, horizonMin: 4, maxKm: 10 },
     fpv: { label: 'FPV-дрони', short: 'FPV', color: '#ffb020', severity: 2, horizonMin: 10, maxKm: 10 },
     recon: { label: 'Розвідувальні БпЛА', short: 'Розвідка', color: '#3fa9f5', severity: 1, horizonMin: 12, maxKm: 12 },
@@ -49,7 +49,7 @@
   const ORDER = Object.keys(TYPES).sort((a, b) => TYPES[b].severity - TYPES[a].severity);
 
   // Short names for the count tiles under the map.
-  const TILE = { missile: 'Ракети', ballistic: 'Балістика', mig31k: 'Авіація', uav: 'БпЛА', kab: 'КАБ', fpv: 'FPV', recon: 'Розвідники', unknown: 'Невідомі' };
+  const TILE = { missile: 'Ракети', ballistic: 'Балістика', mig31k: 'Авіація', jet: 'Реактивні', uav: 'Шахеди', kab: 'КАБ', fpv: 'FPV', recon: 'Розвідники', unknown: 'Невідомі' };
   for (const [type, label] of Object.entries(TILE)) TYPES[type].tile = label;
 
   function typeMeta(type) {
@@ -57,15 +57,33 @@
   }
 
   // NEPTUN has one type "uav" for both kinds of Shahed. Its own map knows a jet one by subtype "jet",
-  // which the open API does not send yet; the title is checked too ("Реактивний шахед"), and an FPV
-  // is sometimes named only in the title.
+  // which only its closed API sends. So, in this order: the subtype when it comes; "реактивний" in the
+  // title or the short explanation; the channel posts about the track's place (intel.js, via setHint);
+  // and, when no post names the place, a measured speed no ordinary Shahed reaches (it flies up to ~185 km/h).
+  // An FPV is sometimes named only in the title.
   const JET = /реактивн|jet|герань-3|shahed-23|шахед-23/i;
+  const NOT_JET = /не\s*реактивн/i;
   const FPV = /fpv|фпв/i;
-  function kindOf(t) {
-    if (t.type === 'fpv' || (t.type === 'uav' && FPV.test(t.title || ''))) return 'fpv';
-    if (t.type === 'uav' && (t.subtype === 'jet' || JET.test(t.title || ''))) return 'jet';
-    return TYPES[t.type] ? t.type : 'unknown';
+  const JET_KMH = 300;
+  let hint = null; // (track) -> 'jet' | 'plain' | null
+  function setHint(fn) {
+    hint = fn;
   }
+  const saysJet = (s) => !!s && JET.test(s) && !NOT_JET.test(s);
+  // { kind, by }: by is what told a Shahed's kind: 'subtype' | 'text' | 'post' | 'speed', or null
+  // when nothing did (then it is taken for an ordinary one, as most are).
+  function classify(t) {
+    if (t.type === 'fpv' || (t.type === 'uav' && FPV.test(t.title || ''))) return { kind: 'fpv', by: null };
+    if (t.type !== 'uav') return { kind: TYPES[t.type] ? t.type : 'unknown', by: null };
+    if (t.subtype) return { kind: t.subtype === 'jet' ? 'jet' : 'uav', by: 'subtype' };
+    if (saysJet(t.title) || saysJet(t.explanationShort)) return { kind: 'jet', by: 'text' };
+    const h = hint ? hint(t) : null;
+    if (h) return { kind: h === 'jet' ? 'jet' : 'uav', by: 'post' };
+    const v = t.velocity && t.velocity.speedKmh;
+    if (Number.isFinite(v) && v >= JET_KMH) return { kind: 'jet', by: 'speed' };
+    return { kind: 'uav', by: null };
+  }
+  const kindOf = (t) => classify(t).kind;
 
   // Current position of a track: moved along its velocity since confirmedAt, within the type's limits.
   function predict(t, now) {
@@ -84,5 +102,5 @@
     return { lat: t.lat, lon: t.lon, heading, km: 0, flying: false };
   }
 
-  root.NeptunTypes = { TYPES, ORDER, typeMeta, kindOf, predict };
+  root.NeptunTypes = { TYPES, ORDER, typeMeta, kindOf, classify, setHint, predict };
 })(self);

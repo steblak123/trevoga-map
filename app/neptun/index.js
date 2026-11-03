@@ -9,7 +9,7 @@
     css.href = base + file;
     document.head.appendChild(css);
   }
-  for (const file of ['geo.js', 'types.js', 'client.js', 'zoom.js', 'widget.js']) {
+  for (const file of ['geo.js', 'types.js', 'client.js', 'intel.js', 'zoom.js', 'basemap.js', 'widget.js']) {
     const s = document.createElement('script');
     s.src = base + file;
     s.async = false; // keep the order
