@@ -148,8 +148,8 @@ function fill(s) {
   if (document.activeElement !== $('token')) $('token').value = s.token;
   $('token').placeholder = s.hasEmbeddedToken ? 'Використовується вбудований токен' : 'Вставте токен';
   $('tokenHint').textContent = s.hasEmbeddedToken
-    ? 'Поле можна залишити порожнім. Свій токен можна отримати на devs.alerts.in.ua.'
-    : 'Токен можна отримати на devs.alerts.in.ua. Зберігається лише на цьому комп’ютері.';
+    ? 'Поле можна залишити порожнім.'
+    : 'Зберігається лише на цьому комп’ютері.';
   syncTree();
 }
 

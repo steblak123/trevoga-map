@@ -22,4 +22,9 @@ contextBridge.exposeInMainWorld('bridge', {
   dragStart: () => ipcRenderer.send('drag-start'),
   resizeStart: () => ipcRenderer.send('resize-start'),
   fitHeight: (h) => ipcRenderer.send('fit-height', h),
+  // NEPTUN targets layer (app/neptun): its own IPC channels, all prefixed "neptun:".
+  neptun: {
+    send: (channel, data) => ipcRenderer.send('neptun:' + channel, data),
+    on: (channel, cb) => ipcRenderer.on('neptun:' + channel, (_e, data) => cb(data)),
+  },
 });

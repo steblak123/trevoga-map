@@ -1,5 +1,6 @@
 const bar = document.getElementById('bar');
 const R = window.Regions;
+const SHOW_MS = 2000; // the banner fades out by itself after this
 let hideTimer = null;
 let audio = null;
 
@@ -86,15 +87,17 @@ function render(p) {
       })
       .join('');
     hint.textContent = p.test ? 'Це перевірка плашки' : 'У ваших районах тривогу скасовано';
-    hideTimer = setTimeout(() => window.bridge.hideOverlay(), 10000);
   }
   bar.style.display = p.visible ? 'block' : 'none';
   // The window is sized to the banner (plus room for the pulsing ring), so it never covers other windows.
   if (p.visible) {
     requestAnimationFrame(() => window.bridge.overlaySize({ width: bar.offsetWidth + 28, height: bar.offsetHeight + 28 }));
+    hideTimer = setTimeout(() => {
+      bar.classList.add('out');
+      hideTimer = setTimeout(() => window.bridge.hideOverlay(), 400);
+    }, SHOW_MS);
   }
   if (p.sound) (p.kind === 'alert' ? playSiren : playChime)(p.volume ?? 0.7);
 }
 
 window.bridge.onOverlay(render);
-document.getElementById('close').addEventListener('click', () => window.bridge.hideOverlay());

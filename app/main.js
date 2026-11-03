@@ -309,7 +309,7 @@ async function poll() {
       else if (e.status === 429) {
         state.error = 'Забагато запитів (429), пауза 1 хв';
         delay = 60000;
-      } else state.error = 'Немає зв’язку з alerts.in.ua';
+      } else state.error = 'Немає зв’язку з сервером тривог';
     }
     broadcastState();
     checkMyRegions();
@@ -518,8 +518,6 @@ function ensureOverlay() {
     backgroundColor: '#00000000',
     resizable: false,
     skipTaskbar: true,
-    // Must stay focusable: a non-activatable window never delivers clicks to the page,
-    // so the close button would not work. It is still shown with showInactive().
     hasShadow: false,
     alwaysOnTop: true,
     show: false,
@@ -531,6 +529,8 @@ function ensureOverlay() {
     },
   });
   overlay.setAlwaysOnTop(true, 'screen-saver');
+  // The banner shows for 2 s and lets every click through, so it never gets in the way.
+  overlay.setIgnoreMouseEvents(true);
   overlay.loadFile(path.join(__dirname, 'overlay.html'));
   overlay.on('closed', () => (overlay = null));
   return overlay;
@@ -651,11 +651,12 @@ function resetPosition() {
 function testAlert() {
   const uid = settings.regions[0] || 31;
   showOverlay({ kind: 'alert', test: true, items: [{ uid, name: regionName(uid), status: 'A', since: Date.now() - 5 * 60000, level: 'red' }], sound: true });
+  // The alert banner hides itself after 2 s; then the all-clear one follows (unless a real banner is up).
   setTimeout(() => {
-    if (!overlayState || !overlayState.test) return;
+    if (overlayState && !overlayState.test) return;
     const end = Date.now();
     showOverlay({ kind: 'clear', test: true, items: [{ uid, name: regionName(uid), start: end - 5 * 60000, end }], sound: true });
-  }, 8000);
+  }, 3500);
 }
 
 // ---------- IPC ----------
