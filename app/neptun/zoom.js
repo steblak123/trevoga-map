@@ -75,6 +75,12 @@
       const w = Math.max(x1 - x0 + margin * 2, ((y1 - y0 + margin * 2) * base[2]) / base[3]);
       apply([(x0 + x1) / 2 - w / 2, (y0 + y1) / 2 - ((w * base[3]) / base[2]) / 2, w]);
     },
+    // Centres the map on a point of map units at zoom k (the events line uses it).
+    centerOn(x, y, k) {
+      if (!base) return;
+      const w = base[2] / Math.min(MAX, Math.max(1, k));
+      apply([x - w / 2, y - (w * base[3]) / base[2] / 2, w]);
+    },
     get zoom() {
       return zoom();
     },

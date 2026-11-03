@@ -426,7 +426,10 @@
     const el = svgEl('g', { class: 'nep-marker ui' });
     // Course pointer outside the badge (towards the target for an off-map one); hidden without a course.
     const ptr = svgEl('path', { class: 'ptr', d: 'M0-21.5 6.2-11.6H-6.2Z' });
-    el.append(svgEl('circle', { class: 'pulse', r: 11 }), ptr, svgEl('circle', { class: 'halo', r: 11 }));
+    // A target named only by where it heads ("Ракета курсом на Балаклія"): it sits on that place, in a sight.
+    const aim = svgEl('g', { class: 'aim' });
+    aim.append(svgEl('circle', { r: 16 }), svgEl('path', { d: 'M0-21V-16.5M0 21V16.5M-21 0H-16.5M21 0H16.5' }));
+    el.append(aim, svgEl('circle', { class: 'pulse', r: 11 }), ptr, svgEl('circle', { class: 'halo', r: 11 }));
     const glyph = svgEl('g', { class: 'glyph' });
     const cnt = svgEl('text', { class: 'cnt', x: 9, y: 16 });
     el.append(glyph, cnt);
@@ -531,6 +534,7 @@
       adv: members.every((i) => i.t.advisory),
       stale: members.every((i) => i.t.status === 'stale'),
       faint: members.every((i) => i.faint),
+      dest: members.every((i) => i.t.destination && i.p.angle == null),
       sel: members.length === 1 && lead.t.id === selected,
       group: members.length > 1,
     };
@@ -562,6 +566,7 @@
       cls.toggle('adv', u.adv);
       cls.toggle('stale', u.stale);
       cls.toggle('faint', u.faint && !u.stale);
+      cls.toggle('dest', !!u.dest);
       cls.toggle('sel', u.sel || (!!group && u.ids.some((id) => group.includes(id))));
       m.el.style.display = '';
     });
@@ -586,6 +591,7 @@
   // (basemap.js knows the towns): a burst that fades with age; hover for who wrote it.
   const BURST = 'M0-11 2.6-4.6 9.5-6.4 5.4-0.6 10 4.8 3-3.6 1.6 10.4-1.8 4.4-7.6 8.6-5.2 1.6-10.6-2.4-4.4-3.4-8.8-8.6-2.8-5.6Z';
   let booms = [];
+  let focusBoom = null; // { name, until }: the explosion just opened from the events line blinks for a while
   const seenBooms = new Set();
   let boomsReady = false;
   function drawBooms(now) {
@@ -598,15 +604,23 @@
       const key = `${b.place.name}|${Math.floor(b.at / 600000)}`;
       if (!seenBooms.has(key)) {
         seenBooms.add(key);
-        if (boomsReady && ticker) ticker.push({ at: b.at, kind: 'boom', title: 'Вибухи', place: [b.place.name, oblastAtMap(b.place.x, b.place.y)].filter(Boolean).join(', '), source: b.sources[0] && b.sources[0].channel });
+        const { x, y } = b.place;
+        const go = () => {
+          focusBoom = { name: b.place.name, until: Date.now() + 6000 };
+          if (window.NeptunZoom) window.NeptunZoom.centerOn(x, y, 12);
+          refresh();
+        };
+        if (boomsReady && ticker) ticker.push({ at: b.at, kind: 'boom', title: 'Вибухи', place: [b.place.name, oblastAtMap(x, y)].filter(Boolean).join(', '), source: b.sources[0] && b.sources[0].channel, go });
       }
     }
     boomsReady = true; // the explosions already there at start are not news
-    const s = ((BADGE_PX / 11) * unitsPerPx).toFixed(4);
+    const s = ((1.35 * BADGE_PX) / 11) * unitsPerPx; // a bit bigger than a target marker
     booms.forEach((b, i) => {
       const age = (now - b.at) / 60000;
-      const g = svgEl('g', { class: 'nep-boom ui' + (age < 3 ? ' fresh' : ''), transform: `translate(${b.place.x} ${b.place.y}) scale(${s})` });
-      g.style.opacity = Math.max(0.4, 1 - age / 20).toFixed(2);
+      const focus = focusBoom && focusBoom.name === b.place.name && now < focusBoom.until;
+      const cls = 'nep-boom ui' + (age < 5 ? ' fresh' : '') + (focus ? ' focus' : '');
+      const g = svgEl('g', { class: cls, transform: `translate(${b.place.x} ${b.place.y}) scale(${(focus ? 1.25 * s : s).toFixed(4)})` });
+      g.style.opacity = focus ? '1' : Math.max(0.45, 1 - age / 50).toFixed(2);
       g.dataset.boom = i;
       g.append(svgEl('circle', { class: 'ring', r: 10 }), svgEl('path', { class: 'burst', d: BURST }), svgEl('circle', { class: 'core', r: 3.2 }));
       boomLayer.appendChild(g);
@@ -632,7 +646,13 @@
   // Where a target came from and where it heads are drawn only for the one you clicked (or the members of
   // the group you clicked): with many targets the beams lit up the whole map. Every marker keeps its small
   // arrow of the course.
-  const picked = (t) => t.id === selected || (!!group && group.includes(t.id));
+  let hoverId = null; // the target under the mouse: its trajectory shows while you point at it
+  const picked = (t) => t.id === selected || t.id === hoverId || (!!group && group.includes(t.id));
+  function setHover(id) {
+    if (id === hoverId) return;
+    hoverId = id;
+    drawTracks(Date.now());
+  }
   const showsFrom = (t) => picked(t);
   const wantsTrack = (t) => picked(t);
 
@@ -1301,9 +1321,10 @@
     const mk = ev.target.closest && ev.target.closest('.nep-marker');
     if (mk && mk.dataset.ids && !svg.classList.contains('nep-panning')) {
       const list = mk.dataset.ids.split(',').map((id) => client.threats.get(id)).filter(Boolean);
+      setHover(list.length === 1 ? list[0].id : null);
       if (list.length === 1 && list[0].id !== selected) return showTip(targetTip(list[0], now, mk.classList.contains('edge')), ev);
       if (list.length > 1) return showTip(listTip(`Група ×${sumSize(list)}`, list.sort(bySeverity), now), ev);
-    }
+    } else setHover(null);
     const bm = ev.target.closest && ev.target.closest('.nep-boom');
     if (bm && booms[bm.dataset.boom]) return showTip(boomTip(booms[bm.dataset.boom], now), ev);
     const tile = ev.target.closest && ev.target.closest('.nep-tile');
@@ -1392,7 +1413,16 @@
         const src = intel ? intel.sources(t, kindOf(t), 1)[0] : null;
         return src ? src.channel : 'NEPTUN';
       };
-      ticker.push({ kind: 'target', title, place: place || 'Україна', source });
+      // a click on the line picks the target (or the first of the group) and brings it into view
+      const go = () => {
+        const cur = client.threats.get(t.id);
+        if (!cur || !project) return;
+        const p = predict(cur, Date.now());
+        const [x, y] = project(p.lat, p.lon);
+        if (window.NeptunZoom) window.NeptunZoom.centerOn(x, y, Math.max(4, window.NeptunZoom.zoom));
+        select(cur.id);
+      };
+      ticker.push({ kind: 'target', title, place: place || 'Україна', source, go });
     }
   }
 

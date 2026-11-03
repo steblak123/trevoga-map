@@ -1,7 +1,8 @@
 // Event ticker under the map (widget.html): air-raid alerts and all-clears, new targets, explosions, one
 // line that scrolls, newest first:  "14:32  Тривога · Чугуївський р-н, Харківська обл. — alerts.in.ua".
-// widget.js puts it on the page and feeds it: push({ at, kind, title, place, source }), where kind is
-// 'alert' | 'clear' | 'target' | 'boom' and source may be a function (the channel may be known later).
+// widget.js puts it on the page and feeds it: push({ at, kind, title, place, source, go }), where kind is
+// 'alert' | 'clear' | 'target' | 'boom', source may be a function (the channel may be known later) and
+// go(), if there is one, shows the event on the map when its line is clicked.
 (function () {
   const MAX = 14; // events kept
   const SPEED = 40; // px per second
@@ -22,7 +23,7 @@
   function item(e) {
     const src = typeof e.source === 'function' ? e.source() : e.source;
     return (
-      `<span class="tk-it" style="--c:${COLORS[e.kind] || '#9fb3c8'}"><i></i><time>${hhmm(e.at)}</time>` +
+      `<span class="tk-it${e.go ? ' go' : ''}" data-i="${events.indexOf(e)}" style="--c:${COLORS[e.kind] || '#9fb3c8'}"><i></i><time>${hhmm(e.at)}</time>` +
       `<b>${esc(e.title)}</b>${e.place ? ` · ${esc(e.place)}` : ''}${src ? `<em>— ${esc(src)}</em>` : ''}</span>`
     );
   }
@@ -49,6 +50,12 @@
     if (events.length > MAX) events.length = MAX;
     render();
   }
+
+  el.addEventListener('click', (ev) => {
+    const it = ev.target.closest && ev.target.closest('.tk-it.go');
+    const e = it && events[Number(it.dataset.i)];
+    if (e && e.go) e.go();
+  });
 
   // Sources that come later (the posts feed is read every 30 s) are filled in on the next refresh.
   setInterval(render, 30000);

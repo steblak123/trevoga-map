@@ -60,7 +60,7 @@
     <div id="nep-more" style="padding-left:24px">
       <label class="row"><input type="checkbox" id="nep-panel"> Плитки з кількістю цілей під картою (як навантаження ПК)</label>
       <label class="row"><input type="checkbox" id="nep-hideFpv"> Приховати FPV-дрони (на карті, у лічильниках і сповіщеннях)</label>
-      <label class="row"><input type="checkbox" id="nep-booms"> Вибухи з повідомлень каналів (15 хвилин)</label>
+      <label class="row"><input type="checkbox" id="nep-booms"> Вибухи з повідомлень каналів (40 хвилин)</label>
       <label class="row"><input type="checkbox" id="nep-ticker"> Стрічка подій під картою: тривоги, нові цілі, вибухи</label>
       <div class="inline" style="padding:4px 0">
         <span class="hint">Інформаційне вікно</span>

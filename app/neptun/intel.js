@@ -23,7 +23,7 @@
   // Explosions: a line that says they were heard or hit, not a warning that they may come.
   const BOOM = /вибух|прил[іи]т|прильот|влучанн|детонац/i;
   const NOT_BOOM = /не\s+чут|не\s+було|можлив|без\s+вибух|загроз|якщо|попередж|не\s+підтвердж|бережіть|укритт|фейк/i;
-  const BOOM_MS = 15 * 60000; // an explosion stays on the map this long
+  const BOOM_MS = 40 * 60000; // an explosion stays on the map this long, fading
   const OFFICIAL = /повітряні сили|air force|kpszsu/i;
   // Line kinds that may speak of a target of each kind (null: a line that names no kind at all).
   // The first one is the target's own kind.
@@ -166,7 +166,7 @@
       return plain ? { mode: 'plain', at: plain.at, channel: plain.channel } : null;
     }
 
-    // Explosions of the last 15 minutes: [{ place, at, sources: [{ channel, at, text }] }], one per town;
+    // Explosions of the last 40 minutes: [{ place, at, sources: [{ channel, at, text }] }], one per town;
     // find(keys) names the town a line speaks of (basemap.js), or null.
     booms(find, now = Date.now()) {
       const byPlace = new Map();

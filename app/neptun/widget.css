@@ -44,6 +44,10 @@
 .nep-marker.faint { opacity: 0.62; }
 .nep-marker.faint .halo { stroke-dasharray: 2.4 2; }
 .nep-marker.faint:hover { opacity: 1; }
+/* aimed at a place: the marker sits on the place it heads for */
+.nep-marker .aim { display: none; fill: none; stroke: var(--c); stroke-width: 1.5; }
+.nep-marker .aim circle { stroke-dasharray: 3.2 2.6; opacity: 0.9; }
+.nep-marker.dest .aim { display: inline; }
 /* pinned to the map edge: the pointer shows where the target is */
 .nep-marker.edge .halo { stroke-dasharray: 4 2.5; }
 .nep-marker.edge .ptr { fill: #fff; }
@@ -57,6 +61,7 @@
 .nep-boom .burst { fill: #ffb020; stroke: #7a2a00; stroke-width: 1.1; stroke-linejoin: round; }
 .nep-boom .core { fill: #fff3c4; }
 .nep-boom.fresh .ring { transform-box: fill-box; transform-origin: center; animation: nep-pulse 1.8s ease-out infinite; }
+.nep-boom.focus .ring { transform-box: fill-box; transform-origin: center; animation: nep-pulse 0.9s ease-out infinite; stroke: #fff; }
 
 /* where a target came from and where it heads (± spread) */
 .nep-trk .from {
@@ -469,6 +474,8 @@ body.no-labels #nep-base-names { display: none; }
 #nep-ticker .tk-it b { font-weight: 600; color: color-mix(in srgb, var(--c) 55%, #fff); }
 #nep-ticker .tk-it em { font-style: normal; color: var(--h-steel); }
 #nep-ticker .tk-it.quiet { color: var(--h-steel); }
+#nep-ticker .tk-it.go { cursor: pointer; }
+#nep-ticker .tk-it.go:hover b { text-decoration: underline; text-underline-offset: 2px; }
 
 /* ---------- "Акуратний" style of everything under the map (settings: neptun.style = 'calm') ----------
    One quiet font, flat panels, no glow, gradients or coloured edges; colour is left to the status dots,
