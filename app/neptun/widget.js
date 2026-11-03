@@ -1,13 +1,13 @@
-// Targets layer of widget.html (data: NEPTUN API): targets on the map (drones, missiles, KABs…),
-// a status line with the targets close to the selected regions, counts under the map, a card with
-// details, and a short banner when a target comes close. Talks to widget.js only through the DOM
-// (#map, #wrap) and window.bridge.
+// Targets layer of widget.html (data: NEPTUN API): targets on the map with where they came from and
+// where they head, an info window and count tiles under the map (styled like the PC load tiles), and
+// a short banner when a target comes close. Nothing is written over the map itself.
+// Talks to widget.js only through the DOM (#map, #wrap, #status, #sys) and window.bridge.
 (function () {
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const { TYPES, ORDER, typeMeta, predict } = window.NeptunTypes;
+  const { TYPES, ORDER, typeMeta, kindOf, predict } = window.NeptunTypes;
   const Geo = window.Geo;
   const bridge = window.bridge;
-  const ipc = bridge.neptun || null; // preload.js hook; without it there is no alert banner
+  const ipc = bridge.neptun || null; // preload.js hook; without it there is no banner
   // Projection of app/assets/map.json (see build/make-map.js), for a map.json without "proj".
   const DEFAULT_PROJ = { lat1: 45, lat2: 51, lat0: 48.5, lon0: 31.5, x0: -690178, y1: 432316, k: 0.000755630581276381 };
   const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left' };
@@ -15,9 +15,12 @@
   const CLUSTER_PX = 15; // markers closer than this on screen become one "×N" marker
   const EDGE_PAD_PX = 13; // targets beyond the visible map are pinned this far inside its edge
   const MOVE_EVERY = 2000; // ms between dead-reckoning steps
-  const COURSE_KM = 60; // length of the course line of the selected target
-  const GROUP_ROWS = 6; // rows in the card of a group (the card never scrolls for them)
-  const NEAR_ROWS = 4; // rows of the "close to your regions" list in the status block
+  const COURSE_KM = 60; // course line of the selected target
+  const HOME_KM = 50; // drones without a course are drawn only this close to your regions (as NEPTUN does)
+  const INFO_ROWS = 4; // lines under the title of the info window
+  const HIST_EVERY = 30000; // count tiles: one sample per 30 s…
+  const HIST_POINTS = 60; // …for the last 30 minutes
+  const DRONES = new Set(['uav', 'jet', 'recon']);
   const CONFIDENCE = { high: 'висока', medium: 'середня', low: 'низька' };
 
   const $ = (id) => document.getElementById(id);
@@ -30,9 +33,10 @@
   let kmPerUnit = 1;
   const shapeIndex = new Map(); // raion / city uid -> { uid, name, d, rings? }
   const oblastIndex = new Map(); // normalized oblast name -> { uid, name, d }
+  let land = []; // [{ x0, y0, x1, y1, rings }] of every raion: is a point over Ukraine
   let mine = []; // shapes of the selected ("my") regions
-  let selected = null; // id of the target shown in the card
-  let group = null; // ids of the group shown in the card
+  let selected = null; // id of the target in the info window
+  let group = null; // ids of the "×N" group in the info window
   let unitsPerPx = 0;
   const pool = []; // marker elements, reused in drawing order
   const nearCache = new Map(); // id -> { km, name, trend } for the current render pass
@@ -47,27 +51,26 @@
 
   const layer = svgEl('g', { id: 'nep-layer' });
   const areaLayer = svgEl('g', { id: 'nep-area' });
+  const trackLayer = svgEl('g', { id: 'nep-tracks' });
   const selLayer = svgEl('g', { id: 'nep-sel' });
   const markerLayer = svgEl('g', { id: 'nep-markers' });
-  layer.append(areaLayer, selLayer, markerLayer);
+  layer.append(areaLayer, trackLayer, selLayer, markerLayer);
   svg.appendChild(layer);
 
-  const panel = document.createElement('div');
-  panel.id = 'nep-panel';
-  panel.innerHTML = '<div class="nep-meta"></div><div class="nep-near"></div>';
-  const summary = document.createElement('div');
-  summary.id = 'nep-summary';
-  const card = document.createElement('div');
-  card.id = 'nep-card';
-  card.className = 'ui';
-  card.hidden = true;
+  // Under the map, next to the PC load tiles: the info window and the count tiles in one grid.
+  const box = document.createElement('div');
+  box.id = 'nep-box';
+  const info = document.createElement('div');
+  info.className = 'nep-info ui';
+  box.appendChild(info);
+  if ($('sys')) $('sys').before(box);
+  else ($('status') || svg).after(box);
   const tip = document.createElement('div');
   tip.id = 'nep-tip';
-  $('wrap').append(panel, card, tip);
-  svg.after(summary); // between the map and the status line
+  $('wrap').appendChild(tip);
 
   // Clicks on our elements must not drag the widget or open the settings (widget.js listens on document).
-  for (const el of [panel, summary, card, markerLayer]) {
+  for (const el of [box, markerLayer]) {
     el.addEventListener('mousedown', (e) => e.stopPropagation());
     el.addEventListener('dblclick', (e) => e.stopPropagation());
   }
@@ -96,8 +99,10 @@
   const shortName = (name) => (window.Regions && window.Regions.shortName ? window.Regions.shortName(name) : name);
   const angleDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
   const lastSeen = (t) => Date.parse(t.confirmedAt || t.updatedAt) || null;
-  const bySeverity = (a, b) => typeMeta(b.type).severity - typeMeta(a.type).severity || (lastSeen(b) || 0) - (lastSeen(a) || 0);
+  const metaOf = (t) => typeMeta(kindOf(t));
+  const bySeverity = (a, b) => metaOf(b).severity - metaOf(a).severity || (lastSeen(b) || 0) - (lastSeen(a) || 0);
   const sizeOf = (t) => (t.count > 1 ? t.count : 1);
+  const sumSize = (list) => list.reduce((s, t) => s + sizeOf(t), 0);
 
   // "Одеська область", "АР Крим", "м. Київ" -> "одеська", "крим", "київ"
   const normOblast = (s) =>
@@ -108,6 +113,9 @@
       .replace(/\s+область$/, '')
       .trim();
 
+  // "Одеська область" -> "Одеської області" ("у бік Одеської області").
+  const toward = (region) => String(region).replace(/ька область$/, 'ької області');
+
   function ago(ms, now) {
     const min = Math.round((now - ms) / 60000);
     if (min < 1) return 'щойно';
@@ -115,20 +123,46 @@
     return `${Math.floor(min / 60)} год ${min % 60} хв тому`;
   }
 
-  const iconSvg = (type, cls = 'nep-ico') => `<svg class="${cls}" viewBox="-12 -12 24 24">${typeMeta(type).icon}</svg>`;
-  const titleOf = (t) => esc(t.title || typeMeta(t.type).short) + (t.count > 1 ? ` <span class="nep-x">×${t.count}</span>` : '');
+  function sinceText(ms, now) {
+    const min = Math.floor((now - ms) / 60000);
+    if (min < 1) return 'щойно';
+    return min < 60 ? `поруч ${min} хв` : `поруч ${Math.floor(min / 60)} год ${min % 60} хв`;
+  }
+
+  const iconSvg = (kind, cls = 'nep-ico') => `<svg class="${cls}" viewBox="-12 -12 24 24">${typeMeta(kind).icon}</svg>`;
+  const titleOf = (t) => esc(t.title || metaOf(t).short) + (t.count > 1 ? ` <span class="nep-x">×${t.count}</span>` : '');
+
+  // Over the sea: a report with no place of its own whose point is off the Ukrainian land.
+  const seaCache = new Map();
+  function seaOf(t) {
+    if (t.areaOnly || (t.locality && t.locality !== t.region) || !project) return null;
+    const key = `${t.id}:${t.lat},${t.lon}`;
+    if (seaCache.has(key)) return seaCache.get(key);
+    if (seaCache.size > 500) seaCache.clear();
+    const [x, y] = project(t.lat, t.lon);
+    let sea = null;
+    if (!land.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1 && Geo.insideRings(r.rings, x, y))) {
+      if (t.lat > 45.25 && t.lat < 47.15 && t.lon > 34.8 && t.lon < 38.7) sea = 'Азовським морем';
+      else if (t.lat > 41 && t.lat < 46.75 && t.lon > 27.3 && t.lon < 41.9) sea = 'Чорним морем';
+    }
+    seaCache.set(key, sea);
+    return sea;
+  }
 
   // "Курс → Лозова" when the message named only where the target flies, otherwise the place itself.
   function placeHtml(t) {
     if (t.areaOnly) return `<b>${esc(t.region)}</b>`;
+    const sea = seaOf(t);
+    if (sea) return `<b>над ${sea}</b>`;
     if (t.destination && t.locality) return `Курс → <b>${esc(t.locality)}</b>`;
     return `<b>${esc(t.locality || t.district || t.region)}</b>`;
   }
 
   function regionLine(t) {
     if (t.areaOnly) return '';
-    const parts = [t.district, t.region].filter((p) => p && p !== t.locality);
-    return esc(parts.join(', '));
+    if (seaOf(t)) return t.region ? esc(`у бік ${toward(t.region)}`) : '';
+    const shown = t.locality || t.district || t.region;
+    return esc([t.district, t.region].filter((p) => p && p !== shown).join(', '));
   }
 
   function rings(shape) {
@@ -136,10 +170,19 @@
     return shape.rings;
   }
 
-  // Targets the user wants to see (the FPV filter applies to the map, counts and alerts alike).
-  const visible = (t) => !(opts.hideFpv && t.type === 'fpv');
+  // Targets the user wants to see: the FPV filter applies to the map, the window, tiles and banners alike.
+  const visible = (t) => !(opts.hideFpv && kindOf(t) === 'fpv');
   const targets = () => client.list().filter(visible);
   const pointTargets = () => targets().filter((t) => !t.areaOnly);
+  const courseless = (t, now) => DRONES.has(kindOf(t)) && predict(t, now).heading == null;
+
+  // Drones without a course are not drawn unless close to your regions (or picked): they are in the tiles.
+  function onMap(t, now) {
+    if (t.id === selected || (group && group.includes(t.id)) || !courseless(t, now)) return true;
+    const near = nearOf(t, now);
+    return !!near && near.km <= HOME_KM;
+  }
+  const mapTargets = (now) => pointTargets().filter((t) => onMap(t, now));
 
   // Map position and on-screen heading (degrees clockwise from up) of a target now.
   function placeOf(t, now) {
@@ -181,12 +224,9 @@
     return near;
   }
 
-  function distanceText(near) {
-    if (!near) return '';
-    const name = esc(shortName(near.name));
-    if (near.km < 0.5) return `над вашим районом · ${name}`;
-    return `≈ ${Math.round(near.km)} км · ${name}${near.trend ? ` · ${near.trend}` : ''}`;
-  }
+  const whereText = (near) =>
+    near.km < 0.5 ? `над районом ${esc(shortName(near.name))}` : `≈ ${Math.round(near.km)} км · ${esc(shortName(near.name))}`;
+  const distanceText = (near) => (near ? whereText(near) + (near.trend && near.km >= 0.5 ? ` · ${near.trend}` : '') : '');
 
   // ---------- markers ----------
 
@@ -199,7 +239,7 @@
     const cnt = svgEl('text', { class: 'cnt', x: 9, y: 16 });
     el.append(glyph, cnt);
     markerLayer.appendChild(el);
-    return { el, glyph, ptr, cnt, type: null };
+    return { el, glyph, ptr, cnt, kind: null };
   }
 
   // Visible part of the map in map units, shrunk by the edge padding.
@@ -214,6 +254,8 @@
     };
   }
 
+  const inView = (v, x, y) => x >= v.x0 && x <= v.x1 && y >= v.y0 && y <= v.y1;
+
   // Drawing units: single targets and groups of targets that overlap on screen.
   // Targets beyond the visible map are pinned to its edge with the pointer towards them.
   function computeUnits(now) {
@@ -221,7 +263,7 @@
     if (!project || !m || !m.a || !svg.getAttribute('viewBox')) return [];
     unitsPerPx = 1 / m.a;
     const v = viewBounds(m);
-    const items = pointTargets()
+    const items = mapTargets(now)
       .sort(bySeverity)
       .map((t) => {
         const p = placeOf(t, now);
@@ -273,15 +315,15 @@
     const s = ((BADGE_PX / 11) * unitsPerPx).toFixed(4);
     units.forEach((u, i) => {
       const m = pool[i] || (pool[i] = makeMarker());
-      const meta = typeMeta(u.lead.type);
-      if (m.type !== meta.type) {
-        m.glyph.innerHTML = `<g class="g">${meta.icon}</g>`;
-        m.el.style.setProperty('--c', meta.color);
-        m.type = meta.type;
+      const kind = kindOf(u.lead);
+      if (m.kind !== kind) {
+        m.glyph.innerHTML = `<g class="g">${typeMeta(kind).icon}</g>`;
+        m.el.style.setProperty('--c', typeMeta(kind).color);
+        m.kind = kind;
       }
       m.el.dataset.ids = u.ids.join(',');
       m.el.setAttribute('transform', `translate(${u.x.toFixed(2)} ${u.y.toFixed(2)}) scale(${s})`);
-      const turn = u.glyphAngle == null || meta.type === 'unknown' ? 0 : u.glyphAngle.toFixed(1); // a "?" stays upright
+      const turn = u.glyphAngle == null || kind === 'unknown' ? 0 : u.glyphAngle.toFixed(1); // a "?" stays upright
       m.glyph.setAttribute('transform', `rotate(${turn}) scale(0.72)`);
       m.ptr.setAttribute('transform', `rotate(${u.ptrAngle == null ? 0 : u.ptrAngle.toFixed(1)})`);
       m.cnt.textContent = u.count > 1 ? `×${u.count}` : '';
@@ -298,31 +340,60 @@
       pool[i].el.style.display = 'none';
       pool[i].el.dataset.ids = '';
     }
+    drawTracks(now);
     drawSelection(now);
   }
 
-  // Trail, course line and uncertainty circle of the selected target (when it is on the map).
+  // Where each target came from (reported trail up to its position now) and where it heads:
+  // a translucent sector, wider when the course is only an estimate.
+  function drawTracks(now) {
+    trackLayer.textContent = '';
+    const m = svg.getScreenCTM();
+    if (!opts.markers || !project || !unitsPerPx || !m) return;
+    const v = viewBounds(m);
+    const minKm = (BADGE_PX + 14) * unitsPerPx * kmPerUnit; // the sector reaches past the badge
+    for (const t of mapTargets(now)) {
+      const p = placeOf(t, now);
+      if (!inView(v, p.x, p.y)) continue;
+      const g = svgEl('g', { class: 'nep-trk' + (t.id === selected ? ' sel' : '') });
+      g.style.setProperty('--c', metaOf(t).color);
+      const raw = (Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon)).map((q) => project(q.lat, q.lon));
+      raw.push(project(t.lat, t.lon), [p.x, p.y]);
+      const pts = [];
+      for (const q of raw) if (!pts.length || Math.hypot(q[0] - pts[pts.length - 1][0], q[1] - pts[pts.length - 1][1]) > 0.3) pts.push(q);
+      let len = 0;
+      for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      if (pts.length > 1 && len * kmPerUnit > 1.5) {
+        g.appendChild(svgEl('polyline', { class: 'from', points: pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ') }));
+        g.appendChild(svgEl('circle', { class: 'start', cx: pts[0][0].toFixed(2), cy: pts[0][1].toFixed(2), r: (2.4 * unitsPerPx).toFixed(3) }));
+      }
+      if (p.heading != null) {
+        const speed = t.velocity && t.velocity.speedKmh > 0 ? t.velocity.speedKmh : 0;
+        const km = Math.max(minKm, speed ? Math.min(45, speed / 6) : 20); // about 10 minutes ahead
+        const spread = t.presumptiveCourse || !speed ? 22 : 12;
+        const at = (deg, k) => project(...Geo.dest(p.lat, p.lon, deg, k));
+        const cone = [[p.x, p.y], at(p.heading - spread, km), at(p.heading, km * 1.06), at(p.heading + spread, km)];
+        g.appendChild(svgEl('polygon', { class: 'to', points: cone.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ') }));
+      }
+      if (g.childNodes.length) trackLayer.appendChild(g);
+    }
+  }
+
+  // Course line and uncertainty circle of the selected target (when it is in view).
   function drawSelection(now) {
     selLayer.textContent = '';
     const t = selected && client.threats.get(selected);
-    if (!t || t.areaOnly || !opts.markers || !project || !unitsPerPx) return;
-    const p = placeOf(t, now);
     const m = svg.getScreenCTM();
-    const v = m && viewBounds(m);
-    if (v && (p.x < v.x0 || p.x > v.x1 || p.y < v.y0 || p.y > v.y1)) return;
-    selLayer.style.setProperty('--c', typeMeta(t.type).color);
+    if (!t || t.areaOnly || !opts.markers || !project || !unitsPerPx || !m) return;
+    const p = placeOf(t, now);
+    if (!inView(viewBounds(m), p.x, p.y)) return;
+    selLayer.style.setProperty('--c', metaOf(t).color);
     if (t.uncertaintyKm > 0) {
       const r = t.uncertaintyKm / kmPerUnit;
       if (r / unitsPerPx > BADGE_PX + 3) selLayer.appendChild(svgEl('circle', { class: 'unc', cx: p.x, cy: p.y, r }));
     }
-    if (Array.isArray(t.trail) && t.trail.length) {
-      const pts = t.trail.filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon)).map((q) => project(q.lat, q.lon));
-      pts.push([p.x, p.y]);
-      selLayer.appendChild(svgEl('polyline', { class: 'trail', points: pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ') }));
-    }
     if (p.heading != null) {
-      const [lat2, lon2] = Geo.dest(p.lat, p.lon, p.heading, COURSE_KM);
-      const [x2, y2] = project(lat2, lon2);
+      const [x2, y2] = project(...Geo.dest(p.lat, p.lon, p.heading, COURSE_KM));
       selLayer.appendChild(svgEl('line', { class: 'course', x1: p.x, y1: p.y, x2, y2 }));
     }
   }
@@ -340,319 +411,11 @@
       byOblast.get(o).push(t);
     }
     for (const [o, list] of byOblast) {
-      const top = list.sort(bySeverity)[0];
       const path = svgEl('path', { class: 'nep-area', d: o.d });
-      path.style.setProperty('--c', typeMeta(top.type).color);
+      path.style.setProperty('--c', metaOf(list.sort(bySeverity)[0]).color);
       areaLayer.appendChild(path);
     }
   }
-
-  // ---------- status line (top left) ----------
-
-  function renderMeta() {
-    const box = panel.querySelector('.nep-meta');
-    const st = client.status;
-    let text;
-    if (st === 'live' && client.updatedAt) text = `станом на ${hhmmss(client.updatedAt)}`;
-    else if (st === 'connecting') text = 'підключення…';
-    else text = client.updatedAt ? `немає зв’язку · дані на ${hhmm(client.updatedAt)}` : 'немає зв’язку';
-    const noCourse = pointTargets().filter((t) => predict(t, Date.now()).heading == null).length;
-    if (noCourse && st === 'live') text += ` · ${noCourse} без курсу`;
-    setHtml(box, `<i class="nep-dot ${st}"></i>${esc(text)}`);
-  }
-
-  function sinceText(ms, now) {
-    const min = Math.floor((now - ms) / 60000);
-    if (min < 1) return 'щойно';
-    return min < 60 ? `поруч ${min} хв` : `поруч ${Math.floor(min / 60)} год ${min % 60} хв`;
-  }
-
-  // Every target within the radius of the selected regions, new and long-standing, with how long it
-  // has been close. Without any: one quiet line with the nearest target.
-  function renderNear(now) {
-    const box = panel.querySelector('.nep-near');
-    if (!opts.panel || !mine.length) return setHtml(box, '');
-    const close = closeTargets(now);
-    if (close.length) {
-      const rows = close
-        .slice(0, NEAR_ROWS)
-        .map(({ t, near }) => {
-          const where = near.km < 0.5 ? `над районом ${esc(shortName(near.name))}` : `≈ ${Math.round(near.km)} км · ${esc(shortName(near.name))}`;
-          const trend = near.trend ? ` · ${near.trend}` : '';
-          return (
-            `<button class="nep-near-row ui" data-id="${esc(t.id)}" style="--c:${typeMeta(t.type).color}">${iconSvg(t.type)}` +
-            `<span><b>${titleOf(t)}</b> — ${where}${trend} <small>· ${sinceText(inside.get(t.id), now)}</small></span></button>`
-          );
-        })
-        .join('');
-      const more = close.length > NEAR_ROWS ? `<div class="nep-near-more">і ще ${close.length - NEAR_ROWS}</div>` : '';
-      return setHtml(box, `<div class="nep-near-head">Біля ваших районів · до ${opts.alertKm} км</div>${rows}${more}`);
-    }
-    let best = null;
-    for (const t of pointTargets()) {
-      const near = nearOf(t, now);
-      if (near && (!best || near.km < best.near.km)) best = { t, near };
-    }
-    setHtml(
-      box,
-      best ? `<button class="nep-link ui" data-id="${esc(best.t.id)}">Найближча: <b>${esc(typeMeta(best.t.type).short)} — ${distanceText(best.near)}</b></button>` : '',
-    );
-  }
-
-  // ---------- counts under the map ----------
-
-  function countChips(list, scope) {
-    const counts = {};
-    for (const t of list) counts[typeMeta(t.type).type] = (counts[typeMeta(t.type).type] || 0) + sizeOf(t);
-    return ORDER.filter((type) => counts[type])
-      .map((type) => `<button class="nep-chip ui" data-type="${type}" data-scope="${scope}" style="--c:${TYPES[type].color}">${iconSvg(type)}<b>${counts[type]}</b></button>`)
-      .join('');
-  }
-
-  // Targets inside the selected regions and within the alert radius of them.
-  function mineLists(now) {
-    const inside = [];
-    for (const t of pointTargets()) {
-      const near = nearOf(t, now);
-      if (!near) continue;
-      if (near.km < 0.5) inside.push(t);
-    }
-    return { inside, close: closeTargets(now).map((c) => c.t) };
-  }
-
-  function renderSummary(now) {
-    if (!opts.markers || !opts.panel) {
-      summary.hidden = true;
-      return;
-    }
-    summary.hidden = false;
-    const points = pointTargets();
-    const area = targets().filter((t) => t.areaOnly);
-    const total = points.reduce((s, t) => s + sizeOf(t), 0) + area.length;
-    let html = `<span class="nep-group"><span class="nep-lbl">Україна <b>${total}</b></span>${countChips(points, 'all')}`;
-    if (area.length) html += `<button class="nep-chip ui area" data-area="1">по області <b>${area.length}</b></button>`;
-    if (!total) html += `<span class="nep-none">${client.status === 'live' ? 'цілей немає' : '—'}</span>`;
-    html += '</span>';
-    if (mine.length) {
-      const { inside, close } = mineLists(now);
-      const n = inside.reduce((s, t) => s + sizeOf(t), 0);
-      html += `<span class="nep-group"><span class="nep-lbl">Ваші райони <b>${n}</b></span>${countChips(inside, 'in')}`;
-      html += `<button class="nep-chip ui near${close.length ? ' hot' : ''}" data-near="1">до ${opts.alertKm} км <b>${close.length}</b></button></span>`;
-    }
-    setHtml(summary, html);
-  }
-
-  // ---------- card ----------
-
-  function row(label, value) {
-    return value ? `<span class="k">${label}</span><span class="v">${value}</span>` : '';
-  }
-
-  // Always on the side chosen in the settings: left below the status line, or right below the gear.
-  function placeCard() {
-    const right = opts.cardSide === 'right';
-    const top = right ? 34 : panel.offsetTop + panel.offsetHeight + 6;
-    const bottom = svg.getBoundingClientRect().bottom - 4;
-    card.classList.toggle('right', right);
-    card.style.top = top + 'px';
-    card.style.maxHeight = Math.max(120, bottom - top) + 'px';
-  }
-
-  function targetCardHtml(t, now) {
-    const meta = typeMeta(t.type);
-    const p = predict(t, now);
-    const seen = lastSeen(t);
-    let course = 'невідомий';
-    if (t.areaOnly) course = '';
-    else if (p.heading != null) course = `${Geo.compass(p.heading)} · ${Math.round(p.heading)}°${t.presumptiveCourse ? ' (оцінка)' : ''}`;
-    const speed = t.velocity && t.velocity.speedKmh > 0 ? `≈ ${Math.round(t.velocity.speedKmh)} км/год` : '';
-    const n = t.sourceCount || 0;
-    const sources = n ? `${n} ${plural(n, ['джерело', 'джерела', 'джерел'])}` : '';
-    const conf = CONFIDENCE[t.displayConfidence || t.confidenceLevel] || '';
-    const accuracy = t.areaOnly ? 'лише область' : t.uncertaintyKm > 0 ? `±${Math.round(t.uncertaintyKm)} км${t.positionQuality === 'approx' ? ', приблизно' : ''}` : '';
-
-    const notes = [];
-    if (t.areaOnly) notes.push('Точки немає: у повідомленні названо лише область (на карті — пунктирний контур).');
-    else if (t.destination) notes.push('У повідомленні названо лише, куди летить: позиція на карті розрахункова.');
-    else if (p.flying && p.km > 0.5) notes.push(`Позиція розрахована за курсом від останньої згадки (+${Math.round(p.km)} км).`);
-    if (t.advisory) notes.push('Спостереження, а не сигнал ховатися: широкої тривоги немає.');
-    if (t.status === 'stale') notes.push('Давно не було нових повідомлень.');
-
-    return (
-      `<div class="nep-head">` +
-      `<div class="nep-badge" style="--c:${meta.color}">${iconSvg(meta.type)}</div>` +
-      `<div class="nep-title"><div>${titleOf(t)}</div><div class="nep-place">${placeHtml(t)}</div>` +
-      (regionLine(t) ? `<div class="nep-sub">${regionLine(t)}</div>` : '') +
-      `</div><button class="nep-close" title="Закрити">×</button></div>` +
-      `<div class="nep-rows">` +
-      row('Курс', esc(course)) +
-      row('Швидкість', esc(speed)) +
-      row('Остання згадка', seen ? `${hhmm(seen)} <small>${esc(ago(seen, now))}</small>` : '') +
-      row('До ваших районів', distanceText(nearOf(t, now))) +
-      row('Джерела', esc(sources)) +
-      row('Достовірність', esc(conf)) +
-      row('Точність', esc(accuracy)) +
-      `</div>` +
-      (t.explanationShort && t.explanationShort !== t.title ? `<div class="nep-expl">${esc(t.explanationShort)}</div>` : '') +
-      notes.map((x) => `<div class="nep-note">${esc(x)}</div>`).join('')
-    );
-  }
-
-  // Card of a "×N" group: a short list, each row opens that target.
-  function groupCardHtml(list, now) {
-    const top = list[0];
-    const count = list.reduce((s, t) => s + sizeOf(t), 0);
-    const places = [...new Set(list.map((t) => t.locality || t.region).filter(Boolean))];
-    const rows = list
-      .slice(0, GROUP_ROWS)
-      .map((t) => {
-        const near = nearOf(t, now);
-        const sub = [ago(lastSeen(t) || now, now), near ? (near.km < 0.5 ? 'над вашим районом' : `≈ ${Math.round(near.km)} км`) : ''].filter(Boolean).join(' · ');
-        return (
-          `<button class="nep-item ui" data-id="${esc(t.id)}" style="--c:${typeMeta(t.type).color}">${iconSvg(t.type)}` +
-          `<span class="nep-item-t">${titleOf(t)} <span class="nep-item-p">${placeHtml(t)}</span></span><small>${esc(sub)}</small></button>`
-        );
-      })
-      .join('');
-    const more = list.length > GROUP_ROWS ? `<div class="nep-more">і ще ${list.length - GROUP_ROWS} — наведіть на групу, щоб побачити всі</div>` : '';
-    return (
-      `<div class="nep-head">` +
-      `<div class="nep-badge" style="--c:${typeMeta(top.type).color}">${iconSvg(top.type)}</div>` +
-      `<div class="nep-title"><div>Група цілей <span class="nep-x">×${count}</span></div>` +
-      `<div class="nep-sub">${esc(places.slice(0, 3).join(', '))}${places.length > 3 ? '…' : ''}</div>` +
-      `</div><button class="nep-close" title="Закрити">×</button></div>` +
-      `<div class="nep-items">${rows}</div>${more}`
-    );
-  }
-
-  function renderCard(now) {
-    if (!opts.markers) {
-      card.hidden = true;
-      return;
-    }
-    const t = selected && client.threats.get(selected);
-    const list = group ? group.map((id) => client.threats.get(id)).filter((x) => x && visible(x)).sort(bySeverity) : [];
-    if (t && visible(t)) setHtml(card, targetCardHtml(t, now));
-    else if (list.length) setHtml(card, groupCardHtml(list, now));
-    else {
-      selected = group = null;
-      card.hidden = true;
-      return;
-    }
-    card.hidden = false;
-    placeCard();
-  }
-
-  function select(id) {
-    selected = id && client.threats.has(id) ? id : null;
-    group = null;
-    hideTip();
-    refresh();
-  }
-
-  function selectGroup(ids) {
-    selected = null;
-    group = ids && ids.length ? ids : null;
-    hideTip();
-    refresh();
-  }
-
-  // Next target of a list after the selected one (newest first).
-  function cycle(list) {
-    list = list.sort((a, b) => (lastSeen(b) || 0) - (lastSeen(a) || 0));
-    if (!list.length) return;
-    const i = list.findIndex((t) => t.id === selected);
-    select(list[(i + 1) % list.length].id);
-  }
-
-  // ---------- tooltip ----------
-
-  function showTip(html, ev) {
-    tip.innerHTML = html;
-    tip.style.display = 'block';
-    const w = tip.offsetWidth;
-    const h = tip.offsetHeight;
-    let x = ev.clientX + 14;
-    let y = ev.clientY + 14;
-    if (x + w > innerWidth - 4) x = Math.max(4, ev.clientX - w - 10);
-    if (y + h > innerHeight - 4) y = Math.max(4, ev.clientY - h - 10);
-    tip.style.left = x + 'px';
-    tip.style.top = y + 'px';
-  }
-
-  function hideTip() {
-    tip.style.display = 'none';
-  }
-
-  function targetTip(t, now, edge) {
-    const seen = lastSeen(t);
-    const near = nearOf(t, now);
-    return (
-      `<b>${titleOf(t)}</b><div>${placeHtml(t)}</div>` +
-      (regionLine(t) ? `<div class="sub">${regionLine(t)}</div>` : '') +
-      `<div class="sub">${seen ? esc(ago(seen, now)) : ''}${near ? ' · ' + distanceText(near) : ''}</div>` +
-      (edge ? '<div class="sub">За межами карти — стрілка показує напрямок</div>' : '')
-    );
-  }
-
-  function listTip(list, now, hint) {
-    const rows = list
-      .slice(0, 12)
-      .map((t) => `<li>${esc(t.title || typeMeta(t.type).short)}${t.count > 1 ? ` ×${t.count}` : ''} — ${placeHtml(t)} <span class="sub">${esc(ago(lastSeen(t) || now, now))}</span></li>`)
-      .join('');
-    const more = list.length > 12 ? `<div class="sub">і ще ${list.length - 12}</div>` : '';
-    return `<ul>${rows}</ul>${more}<div class="sub">${hint}</div>`;
-  }
-
-  // Targets behind a counter: a type in Ukraine or in the selected regions, area-only, or close ones.
-  function chipList(chip, now) {
-    if (chip.dataset.area) return targets().filter((t) => t.areaOnly);
-    if (chip.dataset.near) return mineLists(now).close;
-    const base = chip.dataset.scope === 'in' ? mineLists(now).inside : pointTargets();
-    return base.filter((t) => typeMeta(t.type).type === chip.dataset.type);
-  }
-
-  function chipHead(chip) {
-    if (chip.dataset.area) return 'Названо лише область';
-    if (chip.dataset.near) return `Ближче ніж ${opts.alertKm} км до ваших районів`;
-    return TYPES[chip.dataset.type].label + (chip.dataset.scope === 'in' ? ' у ваших районах' : '');
-  }
-
-  document.addEventListener('mousemove', (ev) => {
-    const now = Date.now();
-    const mk = ev.target.closest && ev.target.closest('.nep-marker');
-    if (mk && mk.dataset.ids) {
-      const list = mk.dataset.ids.split(',').map((id) => client.threats.get(id)).filter(Boolean);
-      const edge = mk.classList.contains('edge');
-      if (list.length === 1 && list[0].id !== selected) return showTip(targetTip(list[0], now, edge), ev);
-      if (list.length > 1) {
-        const count = list.reduce((s, t) => s + sizeOf(t), 0);
-        return showTip(`<b>Група цілей ×${count}</b>${listTip(list.sort(bySeverity), now, 'Клік — список')}`, ev);
-      }
-    }
-    const chip = ev.target.closest && ev.target.closest('.nep-chip');
-    if (chip) {
-      const list = chipList(chip, now);
-      if (list.length) return showTip(`<b>${esc(chipHead(chip))}</b>${listTip(list, now, 'Клік — показати по черзі')}`, ev);
-      return showTip(`<b>${esc(chipHead(chip))}</b><div class="sub">Зараз немає</div>`, ev);
-    }
-    hideTip();
-  });
-  document.addEventListener('mouseleave', hideTip);
-
-  document.addEventListener('click', (ev) => {
-    const el = ev.target.closest && ev.target.closest('.nep-marker, .nep-chip, .nep-link, .nep-item, .nep-near-row, .nep-close');
-    if (!el) return;
-    if (el.classList.contains('nep-close')) return select(null);
-    if (el.classList.contains('nep-marker')) {
-      const ids = (el.dataset.ids || '').split(',').filter(Boolean);
-      if (ids.length === 1) return select(ids[0] === selected ? null : ids[0]);
-      const same = group && ids.length === group.length && ids.every((id) => group.includes(id));
-      return same ? select(null) : selectGroup(ids);
-    }
-    if (el.matches('.nep-link, .nep-item, .nep-near-row')) return select(el.dataset.id);
-    cycle(chipList(el, Date.now()));
-  });
 
   // ---------- targets close to the selected regions ----------
 
@@ -701,15 +464,362 @@
       volume,
       items: fresh.map(({ t, near }) => ({
         id: t.id,
-        type: typeMeta(t.type).type,
-        title: (t.title || typeMeta(t.type).short) + (t.count > 1 ? ` ×${t.count}` : ''),
-        place: t.locality || t.district || t.region || '',
+        type: kindOf(t),
+        title: (t.title || metaOf(t).short) + (t.count > 1 ? ` ×${t.count}` : ''),
+        place: seaOf(t) ? `над ${seaOf(t)}` : t.locality || t.district || t.region || '',
         km: Math.round(near.km),
         name: shortName(near.name),
         trend: near.trend || '',
       })),
     });
   }
+
+  // ---------- info window ----------
+
+  function statusHtml() {
+    const st = client.status;
+    let text;
+    if (st === 'live') text = client.updatedAt ? hhmmss(client.updatedAt) : '';
+    else if (st === 'connecting') text = 'підключення…';
+    else text = `немає зв’язку${client.updatedAt ? ' · ' + hhmm(client.updatedAt) : ''}`;
+    return `<span class="nep-is"><i class="nep-dot ${st}"></i>${esc(text)}</span>`;
+  }
+
+  const head = (title, right) => `<div class="nep-ih"><span class="nep-it">${title}</span>${right}</div>`;
+  const line = (html, cls = '') => `<div class="nep-il${cls}">${html}</div>`;
+  const closeBtn = '<button class="nep-close ui" title="Закрити">×</button>';
+  const rowHtml = (t, rest) =>
+    `<button class="nep-row ui" data-id="${esc(t.id)}" style="--c:${metaOf(t).color}">${iconSvg(kindOf(t))}<span><b>${titleOf(t)}</b> — ${rest}</span></button>`;
+
+  function nearestTarget(now) {
+    let best = null;
+    for (const t of pointTargets()) {
+      const near = nearOf(t, now);
+      if (near && (!best || near.km < best.near.km)) best = { t, near };
+    }
+    return best;
+  }
+
+  // Every target within the radius, new and long-standing, with how long it has been close.
+  function nearInfoHtml(now) {
+    if (!mine.length) return head('Цілі поруч', statusHtml()) + line('Оберіть свої райони в налаштуваннях — тут будуть цілі біля них', ' muted');
+    const close = closeTargets(now);
+    let html = head(`Біля ваших районів · до ${opts.alertKm} км`, statusHtml());
+    if (close.length) {
+      const n = close.length > INFO_ROWS ? INFO_ROWS - 1 : INFO_ROWS;
+      html += close
+        .slice(0, n)
+        .map(({ t, near }) => rowHtml(t, `${distanceText(near)} <small>· ${sinceText(inside.get(t.id), now)}</small>`))
+        .join('');
+      if (close.length > n) html += line(`і ще ${close.length - n} — наведіть на плитку «Біля вас»`, ' muted');
+      return html;
+    }
+    html += line('Поруч нікого', ' muted');
+    const best = nearestTarget(now);
+    if (best) html += rowHtml(best.t, `найближча · ${distanceText(best.near)}`);
+    return html;
+  }
+
+  function targetInfoHtml(t, now) {
+    const p = predict(t, now);
+    const seen = lastSeen(t);
+    let course = '';
+    if (!t.areaOnly) course = p.heading != null ? `курс ${Geo.compass(p.heading)} · ${Math.round(p.heading)}°${t.presumptiveCourse ? ' (оцінка)' : ''}` : 'курс невідомий';
+    const speed = t.velocity && t.velocity.speedKmh > 0 ? `≈ ${Math.round(t.velocity.speedKmh)} км/год` : '';
+    const n = t.sourceCount || 0;
+    const sources = n ? `${n} ${plural(n, ['джерело', 'джерела', 'джерел'])}` : '';
+    const conf = CONFIDENCE[t.displayConfidence || t.confidenceLevel];
+    const accuracy = t.areaOnly ? 'лише область' : t.uncertaintyKm > 0 ? `±${Math.round(t.uncertaintyKm)} км` : '';
+    const near = nearOf(t, now);
+    let note = '';
+    if (t.areaOnly) note = 'Точки немає: названо лише область (на карті — пунктирний контур).';
+    else if (t.destination) note = 'Названо лише, куди летить: позиція на карті розрахункова.';
+    else if (p.flying && p.km > 0.5) note = `Позиція розрахована за курсом від останньої згадки (+${Math.round(p.km)} км).`;
+    else if (t.advisory) note = 'Спостереження, а не сигнал ховатися.';
+    else if (t.status === 'stale') note = 'Давно не було нових повідомлень.';
+    const region = regionLine(t);
+    return (
+      head(`${iconSvg(kindOf(t))}<b>${titleOf(t)}</b> · ${placeHtml(t)}${region ? ` <span class="nep-sub">· ${region}</span>` : ''}`, closeBtn) +
+      line(esc([course, speed].filter(Boolean).join(' · '))) +
+      line(esc([seen ? `згадка ${hhmm(seen)} (${ago(seen, now)})` : '', sources, conf && `достовірність ${conf}`, accuracy].filter(Boolean).join(' · '))) +
+      (near ? line(`до ваших районів ${distanceText(near)}`) : '') +
+      (note ? line(esc(note), ' note') : t.explanationShort && t.explanationShort !== t.title ? line(esc(t.explanationShort), ' muted') : '')
+    );
+  }
+
+  function groupInfoHtml(list, now) {
+    const places = [...new Set(list.map((t) => (seaOf(t) ? `над ${seaOf(t)}` : t.locality || t.region)).filter(Boolean))];
+    let html = head(
+      `${iconSvg(kindOf(list[0]))}<b>Група цілей <span class="nep-x">×${sumSize(list)}</span></b> <span class="nep-sub">· ${esc(places.slice(0, 3).join(', '))}${places.length > 3 ? '…' : ''}</span>`,
+      closeBtn,
+    );
+    const n = list.length > INFO_ROWS ? INFO_ROWS - 1 : INFO_ROWS;
+    html += list
+      .slice(0, n)
+      .map((t) => {
+        const near = nearOf(t, now);
+        const dist = near ? ` · ${near.km < 0.5 ? 'над вашим районом' : `≈ ${Math.round(near.km)} км`}` : '';
+        return rowHtml(t, `${placeHtml(t)} <small>· ${esc(ago(lastSeen(t) || now, now))}${dist}</small>`);
+      })
+      .join('');
+    if (list.length > n) html += line(`і ще ${list.length - n} — наведіть на групу на карті`, ' muted');
+    return html;
+  }
+
+  function renderInfo(now) {
+    const t = selected && client.threats.get(selected);
+    const list = group ? group.map((id) => client.threats.get(id)).filter((x) => x && visible(x)).sort(bySeverity) : [];
+    if (t && visible(t)) return setHtml(info, targetInfoHtml(t, now));
+    if (list.length) return setHtml(info, groupInfoHtml(list, now));
+    selected = group = null;
+    setHtml(info, nearInfoHtml(now));
+  }
+
+  // ---------- count tiles (like the PC load tiles) ----------
+
+  const hist = new Map(); // tile key -> counts, one per HIST_EVERY
+  const tileEls = new Map(); // tile key -> element
+  let sampled = false;
+
+  function counts(now) {
+    const points = pointTargets();
+    const out = { total: sumSize(points) + targets().filter((t) => t.areaOnly).length, near: mine.length ? closeTargets(now).length : 0 };
+    for (const kind of ORDER) out['k:' + kind] = sumSize(points.filter((t) => kindOf(t) === kind));
+    return out;
+  }
+
+  function sample(now) {
+    for (const [key, n] of Object.entries(counts(now))) {
+      const h = hist.get(key) || [];
+      h.push(n);
+      if (h.length > HIST_POINTS) h.shift();
+      hist.set(key, h);
+    }
+  }
+
+  // History plus the value now as the last point.
+  const series = (key, now) => [...(hist.get(key) || []), now];
+
+  function sparkPaths(values) {
+    if (values.length < 2) return '';
+    const max = Math.max(4, ...values);
+    const step = 60 / (HIST_POINTS - 1);
+    const x0 = 60 - (values.length - 1) * step;
+    const pts = values.map((v, i) => `${(x0 + i * step).toFixed(1)},${(30 - (v / max) * 27).toFixed(1)}`);
+    const lineD = 'M' + pts.join('L');
+    return `<path class="area" d="${lineD}L60,30L${x0.toFixed(1)},30Z"/><path class="line" d="${lineD}"/>`;
+  }
+
+  function putTile(key, { color, title, value, values, hot = false, data }) {
+    let el = tileEls.get(key);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'nep-tile ui';
+      Object.assign(el.dataset, data);
+      tileEls.set(key, el);
+    }
+    el.style.setProperty('--c', color);
+    el.classList.toggle('hot', hot);
+    setHtml(
+      el,
+      `<svg class="nep-spark" viewBox="0 0 60 30" preserveAspectRatio="none">${sparkPaths(values)}</svg>` +
+        `<div class="nep-txt"><div class="nep-tt">${title}</div><div class="nep-tv">${value}</div></div>`,
+    );
+    box.appendChild(el); // calls come in display order
+  }
+
+  function renderTiles(now) {
+    const used = new Set();
+    if (opts.panel) {
+      const c = counts(now);
+      const points = pointTargets();
+      const area = targets().filter((t) => t.areaOnly).length;
+      const noCourse = points.filter((t) => courseless(t, now)).length;
+      const close = mine.length ? closeTargets(now) : [];
+      putTile('total', { color: '#9fb3c8', title: 'Усього цілей', value: `${c.total}${noCourse ? ` · ${noCourse} без курсу` : ''}`, values: series('total', c.total), data: { all: '1' } });
+      used.add('total');
+      for (const kind of ORDER) {
+        const key = 'k:' + kind;
+        if (kind === 'fpv' && opts.hideFpv) continue;
+        if (!c[key] && !(hist.get(key) || []).some((v) => v > 0)) continue; // a type seen in the last 30 min stays
+        const k = close.filter((x) => kindOf(x.t) === kind).length;
+        putTile(key, {
+          color: TYPES[kind].color,
+          title: `${iconSvg(kind)}${esc(TYPES[kind].tile || TYPES[kind].short)}`,
+          value: `${c[key]}${k ? ` · поруч ${k}` : ''}`,
+          values: series(key, c[key]),
+          data: { type: kind },
+        });
+        used.add(key);
+      }
+      if (mine.length) {
+        const over = close.filter((x) => x.near.km < 0.5).length;
+        putTile('near', {
+          color: '#ff9f43',
+          title: `Біля вас (${opts.alertKm} км)`,
+          value: `${close.length}${over ? ` · над районами ${over}` : ''}`,
+          values: series('near', close.length),
+          hot: close.length > 0,
+          data: { near: '1' },
+        });
+        used.add('near');
+      }
+    }
+    for (const [key, el] of tileEls) {
+      if (used.has(key)) continue;
+      el.remove();
+      tileEls.delete(key);
+    }
+  }
+
+  // The window takes two tile rows; on a wide widget it sits left or right of the tiles.
+  function layoutBox() {
+    const cols = getComputedStyle(box).gridTemplateColumns.split(' ').filter(Boolean).length;
+    box.classList.toggle('wide', cols >= 3 && opts.panel);
+    box.classList.toggle('right', opts.cardSide === 'right');
+  }
+
+  // Grows the widget once when the window and tiles would squeeze the map (as widget.js does for the PC tiles).
+  let fittedFor = 0;
+  function fitWindow() {
+    if (!bridge.fitHeight) return;
+    const h = (el) => (el ? el.getBoundingClientRect().height : 0);
+    const extra = Math.ceil(h(box) + h($('status')) + h($('sys')));
+    if (!extra || extra === fittedFor) return;
+    fittedFor = extra;
+    const need = Math.ceil(innerWidth * 0.68 + extra);
+    if (innerHeight < need - 20) bridge.fitHeight(need);
+  }
+
+  // ---------- selection ----------
+
+  function select(id) {
+    selected = id && client.threats.has(id) ? id : null;
+    group = null;
+    hideTip();
+    refresh();
+  }
+
+  function selectGroup(ids) {
+    selected = null;
+    group = ids && ids.length ? ids : null;
+    hideTip();
+    refresh();
+  }
+
+  // Next target of a list after the selected one (newest first).
+  function cycle(list) {
+    list = list.sort((a, b) => (lastSeen(b) || 0) - (lastSeen(a) || 0));
+    if (!list.length) return;
+    const i = list.findIndex((t) => t.id === selected);
+    select(list[(i + 1) % list.length].id);
+  }
+
+  // ---------- tooltip ----------
+
+  function showTip(html, ev) {
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    const w = tip.offsetWidth;
+    const h = tip.offsetHeight;
+    let x = ev.clientX + 14;
+    let y = ev.clientY + 14;
+    if (x + w > innerWidth - 4) x = Math.max(4, ev.clientX - w - 10);
+    if (y + h > innerHeight - 4) y = Math.max(4, ev.clientY - h - 10);
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+
+  function hideTip() {
+    tip.style.display = 'none';
+  }
+
+  function targetTip(t, now, edge) {
+    const seen = lastSeen(t);
+    const near = nearOf(t, now);
+    const region = regionLine(t);
+    return (
+      `<b>${titleOf(t)}</b><div>${placeHtml(t)}</div>` +
+      (region ? `<div class="sub">${region}</div>` : '') +
+      `<div class="sub">${seen ? esc(ago(seen, now)) : ''}${near ? ' · ' + distanceText(near) : ''}</div>` +
+      (edge ? '<div class="sub">За межами карти — стрілка показує напрямок</div>' : '')
+    );
+  }
+
+  function listTip(list, now, hint) {
+    const rows = list
+      .slice(0, 12)
+      .map((t) => `<li>${esc(t.title || metaOf(t).short)}${t.count > 1 ? ` ×${t.count}` : ''} — ${placeHtml(t)} <span class="sub">${esc(ago(lastSeen(t) || now, now))}</span></li>`)
+      .join('');
+    const more = list.length > 12 ? `<div class="sub">і ще ${list.length - 12}</div>` : '';
+    return `<ul>${rows}</ul>${more}<div class="sub">${hint}</div>`;
+  }
+
+  // Targets behind a tile: all, one kind, or the close ones.
+  function tileList(el, now) {
+    if (el.dataset.all) return targets();
+    if (el.dataset.near) return closeTargets(now).map((x) => x.t);
+    return pointTargets().filter((t) => kindOf(t) === el.dataset.type);
+  }
+
+  function tileHead(el) {
+    if (el.dataset.all) {
+      const area = targets().filter((t) => t.areaOnly).length;
+      return `Усі цілі${area ? ` · по області ${area}` : ''}`;
+    }
+    if (el.dataset.near) return `Ближче ніж ${opts.alertKm} км до ваших районів`;
+    return TYPES[el.dataset.type].label;
+  }
+
+  document.addEventListener('mousemove', (ev) => {
+    const now = Date.now();
+    const mk = ev.target.closest && ev.target.closest('.nep-marker');
+    if (mk && mk.dataset.ids && !svg.classList.contains('nep-panning')) {
+      const list = mk.dataset.ids.split(',').map((id) => client.threats.get(id)).filter(Boolean);
+      if (list.length === 1 && list[0].id !== selected) return showTip(targetTip(list[0], now, mk.classList.contains('edge')), ev);
+      if (list.length > 1) return showTip(`<b>Група цілей ×${sumSize(list)}</b>${listTip(list.sort(bySeverity), now, 'Клік — список')}`, ev);
+    }
+    const tile = ev.target.closest && ev.target.closest('.nep-tile');
+    if (tile) {
+      const list = tileList(tile, now);
+      return showTip(`<b>${esc(tileHead(tile))}</b>${list.length ? listTip(list, now, 'Клік — показати по черзі') : '<div class="sub">Зараз немає</div>'}`, ev);
+    }
+    hideTip();
+  });
+  document.addEventListener('mouseleave', hideTip);
+
+  document.addEventListener('click', (ev) => {
+    const el = ev.target.closest && ev.target.closest('.nep-marker, .nep-tile, .nep-row, .nep-close');
+    if (!el) return;
+    if (el.classList.contains('nep-close')) return select(null);
+    if (el.classList.contains('nep-marker')) {
+      const ids = (el.dataset.ids || '').split(',').filter(Boolean);
+      if (ids.length === 1) return select(ids[0] === selected ? null : ids[0]);
+      const same = group && ids.length === group.length && ids.every((id) => group.includes(id));
+      return same ? select(null) : selectGroup(ids);
+    }
+    if (el.classList.contains('nep-row')) return select(el.dataset.id);
+    cycle(tileList(el, Date.now()));
+  });
+
+  // ---------- zoom (zoom.js) ----------
+
+  svg.addEventListener('nep-zoom', () => opts.markers && refresh());
+  svg.addEventListener('nep-zoom-mine', () => {
+    if (!mine.length || !window.NeptunZoom) return;
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const s of mine) {
+      for (const r of rings(s)) {
+        for (const [x, y] of r) {
+          x0 = Math.min(x0, x);
+          y0 = Math.min(y0, y);
+          x1 = Math.max(x1, x);
+          y1 = Math.max(y1, y);
+        }
+      }
+    }
+    window.NeptunZoom.fit(x0, y0, x1, y1);
+  });
 
   // ---------- data / settings ----------
 
@@ -719,15 +829,18 @@
     const entered = trackNear(now);
     if (quiet) quiet = false;
     else alertEntered(entered);
-    renderMarkers(now);
     layer.style.display = opts.markers ? '' : 'none';
-    panel.hidden = !opts.markers;
-    if (!panel.hidden) {
-      renderMeta();
-      renderNear(now);
+    renderMarkers(now);
+    box.hidden = !opts.markers;
+    if (box.hidden) return;
+    if (!sampled && client.status === 'live') {
+      sampled = true;
+      sample(now);
     }
-    renderSummary(now);
-    renderCard(now);
+    renderInfo(now);
+    renderTiles(now);
+    layoutBox();
+    fitWindow();
   }
 
   function renderAll() {
@@ -740,6 +853,8 @@
     opts = { ...DEFAULTS, ...((s && s.neptun) || {}) };
     if (s && Number.isFinite(s.volume)) volume = s.volume;
     mine = ((s && s.regions) || []).map((uid) => shapeIndex.get(Number(uid))).filter(Boolean);
+    const zoomBar = $('nep-zoom');
+    if (zoomBar) zoomBar.classList.toggle('has-mine', mine.length > 0);
     quiet = prev.markers; // a settings change re-baselines the close targets without a banner
     if (opts.markers && !prev.markers) client.start();
     if (!opts.markers && prev.markers) client.stop();
@@ -748,7 +863,7 @@
 
   client.subscribe((kind) => {
     if (kind === 'data') renderAll();
-    else if (!panel.hidden) renderMeta();
+    else if (!box.hidden && !selected && !group) renderInfo(Date.now()); // status in the window title
   });
 
   (async () => {
@@ -758,9 +873,16 @@
     kmPerUnit = 1 / (proj.k * 1000);
     for (const r of map.raions) shapeIndex.set(r.uid, { uid: r.uid, name: r.name, d: r.d });
     for (const o of map.oblasts) oblastIndex.set(normOblast(o.name), o);
+    land = map.raions.map((r) => {
+      const rr = Geo.pathRings(r.d);
+      const xs = rr.flat().map((p) => p[0]);
+      const ys = rr.flat().map((p) => p[1]);
+      return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys), rings: rr };
+    });
     applySettings(await bridge.getSettings());
     bridge.onSettings(applySettings);
     setInterval(() => opts.markers && refresh(), MOVE_EVERY);
+    setInterval(() => opts.markers && sample(Date.now()), HIST_EVERY);
     addEventListener('resize', () => opts.markers && refresh());
   })();
 })();

@@ -10,10 +10,10 @@
     <h2>Цілі на карті</h2>
     <label class="row"><input type="checkbox" id="nep-markers"> Показувати БпЛА, ракети, КАБ та інші цілі</label>
     <div id="nep-more" style="padding-left:24px">
-      <label class="row"><input type="checkbox" id="nep-panel"> Лічильники під картою: уся Україна й ваші райони</label>
+      <label class="row"><input type="checkbox" id="nep-panel"> Плитки з кількістю цілей під картою (як навантаження ПК)</label>
       <label class="row"><input type="checkbox" id="nep-hideFpv"> Приховати FPV-дрони (на карті, у лічильниках і сповіщеннях)</label>
       <div class="inline" style="padding:4px 0">
-        <span class="hint">Картка цілі</span>
+        <span class="hint">Інформаційне вікно</span>
         <label class="row"><input type="radio" name="nep-side" value="left"> ліворуч</label>
         <label class="row"><input type="radio" name="nep-side" value="right"> праворуч</label>
       </div>
@@ -25,8 +25,9 @@
         <button id="nep-test" type="button">Перевірити</button>
       </div>
     </div>
-    <div class="hint">Сповіщення — плашка на 2 секунди в правому верхньому куті; гучність — як у розділі «Сповіщення».
-      Цілі поруч з вашими районами видно у віджеті ліворуч угорі, поки вони поруч.</div>`;
+    <div class="hint">Під картою — вікно з цілями біля ваших районів (клік по цілі показує її тут же) і плитки з
+      кількістю цілей. Сповіщення — плашка на 2 секунди в правому верхньому куті; гучність — як у розділі
+      «Сповіщення». Дрони без курсу на карті видно лише поруч з вашими районами; решту — у плитках.</div>`;
   const token = document.getElementById('token');
   const before = token && token.closest('section');
   document.querySelector('main').insertBefore(section, before || null);

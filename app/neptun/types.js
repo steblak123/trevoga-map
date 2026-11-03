@@ -6,6 +6,9 @@
   // Filled with currentColor; elements with class "s" are stroked instead.
   const path = (d) => `<path d="${d}"/>`;
   const ICONS = {
+    // jet Shahed: sharper swept wing, wide nozzle and exhaust at the rear
+    jet: path('M0-12C1-11.5 1.6-10 1.6-8.5V-3L9.5 6V8L1.6 6.4V8.5L3.4 10.6H-3.4L-1.6 8.5V6.4L-9.5 8V6L-1.6-3V-8.5C-1.6-10-1-11.5 0-12Z') +
+      path('M-1.8 11.4 0 14.6 1.8 11.4Z'),
     // Shahed-type delta wing
     uav: path('M0-12C1-11.5 1.7-10 1.7-8.5V-4L10.5 5.5V8L1.7 5.6V9H-1.7V5.6L-10.5 8V5.5L-1.7-4V-8.5C-1.7-10-1-11.5 0-12Z'),
     // quadcopter
@@ -34,6 +37,7 @@
     missile: { label: 'Крилаті ракети', short: 'Ракета', color: '#ff3b4f', severity: 3, horizonMin: 5, maxKm: 30 },
     ballistic: { label: 'Балістика', short: 'Балістика', color: '#e0458f', severity: 3, horizonMin: 1.5, maxKm: 20 },
     mig31k: { label: 'Авіація / МіГ-31К', short: 'МіГ-31К', color: '#9a7cff', severity: 3, horizonMin: 6, maxKm: 24 },
+    jet: { label: 'Реактивні БпЛА', short: 'Реактивний БпЛА', tile: 'Реактивні', color: '#ff5a3c', severity: 3, horizonMin: 6, maxKm: 45 },
     uav: { label: 'БпЛА (шахеди)', short: 'БпЛА', color: '#ff8a1f', severity: 2, horizonMin: 12, maxKm: 18 },
     kab: { label: 'Керовані авіабомби', short: 'КАБ', color: '#ff6a2b', severity: 2, horizonMin: 4, maxKm: 10 },
     fpv: { label: 'FPV-дрони', short: 'FPV', color: '#ffb020', severity: 2, horizonMin: 10, maxKm: 10 },
@@ -44,8 +48,22 @@
 
   const ORDER = Object.keys(TYPES).sort((a, b) => TYPES[b].severity - TYPES[a].severity);
 
+  // Short names for the count tiles under the map.
+  const TILE = { missile: 'Ракети', ballistic: 'Балістика', mig31k: 'Авіація', uav: 'БпЛА', kab: 'КАБ', fpv: 'FPV', recon: 'Розвідники', unknown: 'Невідомі' };
+  for (const [type, label] of Object.entries(TILE)) TYPES[type].tile = label;
+
   function typeMeta(type) {
     return TYPES[type] || TYPES.unknown;
+  }
+
+  // NEPTUN has one type "uav" for both kinds of Shahed and sometimes names an FPV only in the title,
+  // so the kind used for icons, counts and limits also looks at the title.
+  const JET = /реактивн|jet|герань-3|shahed-23|шахед-23/i;
+  const FPV = /fpv|фпв/i;
+  function kindOf(t) {
+    if (t.type === 'fpv' || (t.type === 'uav' && FPV.test(t.title || ''))) return 'fpv';
+    if (t.type === 'uav' && JET.test(t.title || '')) return 'jet';
+    return TYPES[t.type] ? t.type : 'unknown';
   }
 
   // Current position of a track: moved along its velocity since confirmedAt, within the type's limits.
@@ -53,7 +71,7 @@
     const v = t.velocity;
     const heading = t.heading != null && Number.isFinite(t.heading) ? t.heading : null;
     if (!t.areaOnly && v && Number.isFinite(v.speedKmh) && Number.isFinite(v.bearingDeg) && t.confirmedAt && t.status !== 'stale') {
-      const meta = typeMeta(t.type);
+      const meta = typeMeta(kindOf(t));
       const ageMin = (now - Date.parse(t.confirmedAt)) / 60000;
       if (ageMin > 0) {
         const km = Math.min(meta.maxKm, (v.speedKmh * Math.min(ageMin, meta.horizonMin)) / 60);
@@ -65,5 +83,5 @@
     return { lat: t.lat, lon: t.lon, heading, km: 0, flying: false };
   }
 
-  root.NeptunTypes = { TYPES, ORDER, typeMeta, predict };
+  root.NeptunTypes = { TYPES, ORDER, typeMeta, kindOf, predict };
 })(self);
