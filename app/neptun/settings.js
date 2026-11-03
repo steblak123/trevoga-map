@@ -73,7 +73,7 @@
       test: true,
       sound: current.alertSound,
       volume: Number.isFinite(all.volume) ? all.volume : 0.7,
-      items: [{ id: 'test', type: 'uav', title: 'Шахед', place: '', km: n, name: 'ваш район', trend: 'наближається' }],
+      items: [{ id: 'test', type: 'uav', title: 'Шахед', place: 'Перевірка', km: n, name: 'ваш район', trend: 'наближається', status: 'appr', risk: 1, eta: 6 }],
     });
   });
 

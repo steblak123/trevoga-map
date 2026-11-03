@@ -1,8 +1,9 @@
-// Banner "target near your regions" (window created by neptun/main.js): shows the targets that
-// just came close, for 2 s, then fades out by itself. The full list stays in the widget.
+// Banner "targets near your regions" (window created by neptun/main.js): the targets that just came
+// close, as HUD entries, for 2 s; then it fades out by itself. The full list stays in the widget.
 const bar = document.getElementById('bar');
 const SHOW_MS = 2000;
-const ROWS = 4;
+const ROWS = 3;
+const STATUS = { appr: 'Наближається', pass: 'Проліт', away: 'Віддаляється', hit: 'Удар', unk: 'Невідомо' };
 let audio = null;
 let timer = null;
 
@@ -12,6 +13,10 @@ const plural = (n, [one, few, many]) => {
   const b = n % 100;
   return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many;
 };
+const icon = (d) => `<svg class="h-ico" viewBox="-8 -8 16 16">${d}</svg>`;
+const PIN = icon('<path d="M0-7.2a5 5 0 0 1 5 5C5 1.6 0 7.4 0 7.4S-5 1.6-5-2.2a5 5 0 0 1 5-5Zm0 3.1A1.9 1.9 0 1 0 0-.3 1.9 1.9 0 0 0 0-4.1Z"/>');
+const DIST = icon('<path d="M-7.5 0-4-3.4V-1.3H4V-3.4L7.5 0 4 3.4V1.3H-4V3.4Z"/>');
+const CLOCK = icon('<circle class="s" r="6" stroke-width="1.6"/><path class="s" stroke-width="1.6" stroke-linecap="round" d="M0-3.4V0l2.6 1.7"/>');
 
 // Two short double beeps: noticeable, but not the air-raid siren.
 function beep(volume) {
@@ -32,6 +37,23 @@ function beep(volume) {
   });
 }
 
+function entry(i) {
+  const T = window.NeptunTypes;
+  const meta = T.typeMeta(i.type);
+  const st = STATUS[i.status] ? i.status : 'unk';
+  const dist = i.km < 1 ? `${DIST}над районом` : `${DIST}${i.km}<small>км</small>`;
+  const badges =
+    (i.place ? `<span class="h-b place">${PIN}${esc(i.place)}</span>` : '') +
+    `<span class="h-b dist">${dist}</span>` +
+    (i.eta ? `<span class="h-b eta">${CLOCK}${i.eta}<small>хв</small></span>` : '');
+  return (
+    `<div class="h-ent r${i.risk || 0}" style="--c:${meta.color}">` +
+    `<span class="h-ent-ico" style="--c:${meta.color}"><svg class="h-ico" viewBox="-12 -12 24 24">${meta.icon}</svg></span>` +
+    `<span class="h-ent-name">${esc(i.title)}</span><span class="h-b h-st ${st}">${STATUS[st]}</span>` +
+    `<span class="h-ent-badges">${badges}</span></div>`
+  );
+}
+
 function render(p) {
   clearTimeout(timer);
   bar.classList.remove('out');
@@ -41,20 +63,11 @@ function render(p) {
     return;
   }
   const n = items.length;
-  bar.querySelector('.text').textContent =
-    n === 1 ? 'ЦІЛЬ БІЛЯ ВАШИХ РАЙОНІВ' : `${n} ${plural(n, ['ЦІЛЬ', 'ЦІЛІ', 'ЦІЛЕЙ'])} БІЛЯ ВАШИХ РАЙОНІВ`;
-  const T = window.NeptunTypes;
+  bar.querySelector('.h-title').textContent = `${n} ${plural(n, ['ЦІЛЬ', 'ЦІЛІ', 'ЦІЛЕЙ'])} ПОРУЧ`;
+  bar.classList.toggle('r2', items.some((i) => i.risk === 2));
+  const shown = items.slice(0, n > ROWS ? ROWS - 1 : ROWS);
   document.getElementById('list').innerHTML =
-    items
-      .slice(0, ROWS)
-      .map((i) => {
-        const where = i.km < 1 ? `над районом ${esc(i.name)}` : `≈ ${i.km} км · ${esc(i.name)}`;
-        const trend = i.trend ? ` · <span class="tr">${esc(i.trend)}</span>` : '';
-        const place = i.place ? ` (${esc(i.place)})` : '';
-        return `<div class="row"><svg viewBox="-12 -12 24 24">${T.typeMeta(i.type).icon}</svg>` +
-          `<span><b>${esc(i.title)}</b>${place} — ${where}${trend}</span></div>`;
-      })
-      .join('') + (n > ROWS ? `<div class="more">і ще ${n - ROWS}</div>` : '');
+    shown.map(entry).join('') + (n > shown.length ? `<div class="h-foot"><span class="h-b none">+${n - shown.length}</span></div>` : '');
   bar.style.display = 'block';
   requestAnimationFrame(() => window.bridge.neptun.send('alert-size', { width: bar.offsetWidth + 20, height: bar.offsetHeight + 20 }));
   if (p.sound) beep(p.volume ?? 0.7);

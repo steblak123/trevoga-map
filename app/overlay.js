@@ -58,10 +58,17 @@ function playChime(volume) {
   });
 }
 
+const svgIcon = (d) => `<svg class="h-ico" viewBox="-8 -8 16 16">${d}</svg>`;
+const ICON_ALERT = svgIcon('<path d="M0-7.2 7.4 6.2H-7.4Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M-.8-2.4H.8L.5 2.2H-.5ZM-.9 3.4H.9V5H-.9Z"/>');
+const ICON_CLEAR = svgIcon('<path d="M0-7.4 6.2-5V.2C6.2 4 3.4 6.4 0 7.4-3.4 6.4-6.2 4-6.2.2V-5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M-3-.4-.8 1.8 3.2-2.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>');
+const PIN = svgIcon('<path d="M0-7.2a5 5 0 0 1 5 5C5 1.6 0 7.4 0 7.4S-5 1.6-5-2.2a5 5 0 0 1 5-5Zm0 3.1A1.9 1.9 0 1 0 0-.3 1.9 1.9 0 0 0 0-4.1Z"/>');
+const CLOCK = svgIcon('<circle r="6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M0-3.4V0l2.6 1.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>');
+const badge = (cls, html) => `<span class="h-b ${cls}">${html}</span>`;
+
 function render(p) {
   clearTimeout(hideTimer);
-  bar.className = p.kind;
-  bar.querySelector('.icon').textContent = p.kind === 'alert' ? '🚨' : '✅';
+  bar.className = 'h-pan ' + p.kind;
+  bar.querySelector('.icon').innerHTML = p.kind === 'alert' ? ICON_ALERT : ICON_CLEAR;
   const list = document.getElementById('list');
   const hint = document.getElementById('hint');
   if (p.kind === 'alert') {
@@ -69,24 +76,29 @@ function render(p) {
     bar.querySelector('.text').textContent = partialOnly ? 'ТРИВОГА В ЧАСТИНІ ВАШОГО РАЙОНУ' : 'ПОВІТРЯНА ТРИВОГА';
     list.innerHTML = p.items
       .map((i) => {
-        const since = i.since ? ` — з ${R.formatTime(i.since)} (${R.formatDuration(Date.now() - i.since) || 'щойно'})` : '';
         const places = i.places && i.places.length ? i.places.join(', ') : 'частина району';
-        const part = i.status === 'P' ? ` (${esc(places)})` : '';
-        const lvl = i.level === 'yellow' ? ' · жовтий рівень' : '';
-        return `<div>${esc(i.name)}${part}${lvl}${since}</div>`;
+        return (
+          `<div class="ov-row">${badge('place', PIN + esc(i.name))}` +
+          (i.status === 'P' ? badge('part', esc(places)) : '') +
+          (i.level === 'yellow' ? badge('note', 'жовтий рівень') : '') +
+          (i.since ? badge('', `${CLOCK}з ${R.formatTime(i.since)}`) + badge('eta', esc(R.formatDuration(Date.now() - i.since) || 'щойно')) : '') +
+          `</div>`
+        );
       })
       .join('');
-    hint.textContent = p.test ? 'Це перевірка плашки' : 'Пройдіть в укриття';
+    hint.innerHTML = badge('', p.test ? 'Це перевірка плашки' : 'Пройдіть в укриття');
   } else {
     bar.querySelector('.text').textContent = 'ВІДБІЙ ТРИВОГИ';
     list.innerHTML = (p.items || [])
       .filter((i) => i.end)
-      .map((i) => {
-        const dur = i.start ? `, тривала ${R.formatDuration(i.end - i.start)}` : '';
-        return `<div>${esc(i.name)}: ${esc(R.formatRange(i.start, i.end))}${esc(dur)}</div>`;
-      })
+      .map(
+        (i) =>
+          `<div class="ov-row">${badge('place', PIN + esc(i.name))}${badge('', CLOCK + esc(R.formatRange(i.start, i.end)))}` +
+          (i.start ? badge('eta', esc(R.formatDuration(i.end - i.start))) : '') +
+          `</div>`,
+      )
       .join('');
-    hint.textContent = p.test ? 'Це перевірка плашки' : 'У ваших районах тривогу скасовано';
+    hint.innerHTML = badge('', p.test ? 'Це перевірка плашки' : 'Тривогу скасовано');
   }
   bar.style.display = p.visible ? 'block' : 'none';
   // The window is sized to the banner (plus room for the pulsing ring), so it never covers other windows.
