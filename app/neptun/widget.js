@@ -25,6 +25,8 @@
   const HIST_POINTS = 60; // …for the last 30 minutes
   const DRONES = new Set(['uav', 'jet', 'recon']);
   const FAST = new Set(['missile', 'ballistic', 'jet', 'kab', 'mig31k']);
+  // Direction sector length by kind: [km at most, km when the speed is unknown]; missiles reach far ahead.
+  const AHEAD = { missile: [160, 110], ballistic: [140, 90], jet: [120, 80], mig31k: [100, 70], kab: [45, 30] };
   const CONFIDENCE = { high: 'висока', medium: 'середня', low: 'низька' };
   const STATUS = { appr: 'Наближається', pass: 'Проліт', away: 'Віддаляється', hit: 'Удар', unk: 'Невідомо' };
   const RISK = ['Низький', 'Середній', 'Високий'];
@@ -413,6 +415,8 @@
 
   function renderMarkers(now) {
     const units = opts.markers ? computeUnits(now) : [];
+    layoutLabels();
+    dimLabels(units);
     const s = ((BADGE_PX / 11) * unitsPerPx).toFixed(4);
     units.forEach((u, i) => {
       const m = pool[i] || (pool[i] = makeMarker());
@@ -445,6 +449,17 @@
     drawSelection(now);
   }
 
+  // Tracks are drawn only where they matter, so many targets do not turn into a mess of bands:
+  // the picked target, missiles / ballistics / jets / aviation, and targets close to your regions.
+  // Every other one shows its course by the pointer on its marker.
+  function wantsTrack(t, now) {
+    if (t.id === selected) return true;
+    const kind = kindOf(t);
+    if (FAST.has(kind) && kind !== 'kab') return true;
+    const near = nearOf(t, now);
+    return !!near && near.km <= Math.max(opts.alertKm * 3, 30);
+  }
+
   // Where each target came from (reported trail up to its position now) and where it heads:
   // a translucent sector, wider when the course is only an estimate.
   function drawTracks(now) {
@@ -452,11 +467,24 @@
     const m = svg.getScreenCTM();
     if (!opts.markers || !project || !unitsPerPx || !m) return;
     const v = viewBounds(m);
-    const minKm = (BADGE_PX + 30) * unitsPerPx * kmPerUnit; // the sector reaches well past the badge
+    const defs = svgEl('defs');
+    trackLayer.appendChild(defs);
+    let gid = 0;
+    // A gradient along a segment: [offset, colour, opacity] stops, in map units.
+    const fade = ([x1, y1], [x2, y2], stops) => {
+      const id = `nep-g${gid++}`;
+      const lg = svgEl('linearGradient', { id, gradientUnits: 'userSpaceOnUse', x1: x1.toFixed(2), y1: y1.toFixed(2), x2: x2.toFixed(2), y2: y2.toFixed(2) });
+      for (const [offset, color, opacity] of stops) lg.appendChild(svgEl('stop', { offset, 'stop-color': color, 'stop-opacity': opacity }));
+      defs.appendChild(lg);
+      return `url(#${id})`;
+    };
     for (const t of mapTargets(now)) {
+      if (!wantsTrack(t, now)) continue;
       const p = placeOf(t, now);
       if (!inView(v, p.x, p.y)) continue;
-      const g = svgEl('g', { class: 'nep-trk' + (t.id === selected ? ' sel' : '') });
+      const kind = kindOf(t);
+      const fast = FAST.has(kind) && kind !== 'kab';
+      const g = svgEl('g', { class: 'nep-trk' + (fast ? ' fast' : '') + (t.id === selected ? ' sel' : '') });
       g.style.setProperty('--c', metaOf(t).color);
       const raw = (Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon)).map((q) => project(q.lat, q.lon));
       raw.push(project(t.lat, t.lon), [p.x, p.y]);
@@ -465,19 +493,43 @@
       let len = 0;
       for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
       if (pts.length > 1 && len * kmPerUnit > 1.5) {
-        g.appendChild(svgEl('polyline', { class: 'from', points: pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ') }));
-        g.appendChild(svgEl('circle', { class: 'start', cx: pts[0][0].toFixed(2), cy: pts[0][1].toFixed(2), r: (2.4 * unitsPerPx).toFixed(3) }));
+        // where it came from: fades in from the first report to the position now
+        const color = metaOf(t).color;
+        const stroke = fade(pts[0], pts[pts.length - 1], [[0, color, 0.15], [1, color, 1]]);
+        g.appendChild(svgEl('polyline', { class: 'from', stroke, points: pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ') }));
+        g.appendChild(svgEl('circle', { class: 'start', cx: pts[0][0].toFixed(2), cy: pts[0][1].toFixed(2), r: (2.2 * unitsPerPx).toFixed(3) }));
       }
       if (p.heading != null) {
         const speed = t.velocity && t.velocity.speedKmh > 0 ? t.velocity.speedKmh : 0;
-        const km = Math.max(minKm, speed ? Math.min(60, speed / 5) : 28); // about 12 minutes ahead
-        const spread = t.presumptiveCourse || !speed ? 24 : 15;
+        const [maxKm, noSpeedKm] = AHEAD[kind] || [60, 28];
+        const minKm = (BADGE_PX + (fast ? 64 : 30)) * unitsPerPx * kmPerUnit; // always well past the badge
+        const km = Math.max(minKm, speed ? Math.min(maxKm, speed / 5) : noSpeedKm); // about 12 minutes ahead
+        const spread = (t.presumptiveCourse || !speed ? 24 : 15) * (fast ? 0.7 : 1);
         const at = (deg, k) => project(...Geo.dest(p.lat, p.lon, deg, k));
         const xy = ([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`;
         const cone = [[p.x, p.y], at(p.heading - spread, km), at(p.heading - spread / 2, km * 1.04), at(p.heading, km * 1.06), at(p.heading + spread / 2, km * 1.04), at(p.heading + spread, km)];
-        g.appendChild(svgEl('polygon', { class: 'to', points: cone.map(xy).join(' ') }));
+        // where it heads: a radar-like beam, bright at the marker and fading out ahead
         const tipPt = at(p.heading, km * 1.06);
-        g.appendChild(svgEl('line', { class: 'axis', x1: p.x.toFixed(2), y1: p.y.toFixed(2), x2: tipPt[0].toFixed(2), y2: tipPt[1].toFixed(2) }));
+        const strong = fast || t.id === selected;
+        const beam = '#4fe3ff';
+        g.appendChild(
+          svgEl('polygon', {
+            class: 'to',
+            fill: fade([p.x, p.y], tipPt, [[0, beam, strong ? 0.55 : 0.42], [0.6, beam, strong ? 0.22 : 0.14], [1, beam, 0]]),
+            stroke: fade([p.x, p.y], tipPt, [[0, beam, 1], [0.8, beam, 0.35], [1, beam, 0]]),
+            points: cone.map(xy).join(' '),
+          }),
+        );
+        g.appendChild(
+          svgEl('line', {
+            class: 'axis',
+            stroke: fade([p.x, p.y], tipPt, [[0, '#ffffff', 1], [1, '#ffffff', 0.1]]),
+            x1: p.x.toFixed(2),
+            y1: p.y.toFixed(2),
+            x2: tipPt[0].toFixed(2),
+            y2: tipPt[1].toFixed(2),
+          }),
+        );
       }
       if (g.childNodes.length) trackLayer.appendChild(g);
     }
@@ -499,6 +551,57 @@
     if (p.heading != null) {
       const [x2, y2] = project(...Geo.dest(p.lat, p.lon, p.heading, COURSE_KM));
       selLayer.appendChild(svgEl('line', { class: 'course', x1: p.x, y1: p.y, x2, y2 }));
+    }
+  }
+
+  // ---------- region labels: never on top of each other or under a marker ----------
+
+  // Each label keeps its own line: on a collision it moves a line up or down (or a bit sideways),
+  // and with no free place it hides until the map is zoomed in. Recomputed on zoom and resize.
+  let labelKey = '';
+  const labelBoxes = new Map(); // text element -> its box in map units
+  function layoutLabels() {
+    const texts = [...document.querySelectorAll('#labels text')];
+    const key = `${texts.length}|${svg.getAttribute('viewBox')}|${svg.clientWidth}x${svg.clientHeight}`;
+    if (!texts.length || key === labelKey || !unitsPerPx) return;
+    labelKey = key;
+    labelBoxes.clear();
+    const items = texts.map((t) => {
+      if (t.dataset.ox == null) {
+        t.dataset.ox = t.getAttribute('x');
+        t.dataset.oy = t.getAttribute('y');
+      }
+      t.setAttribute('x', t.dataset.ox);
+      t.setAttribute('y', t.dataset.oy);
+      t.classList.remove('nep-hide');
+      return { t, b: t.getBBox() };
+    });
+    items.sort((a, b) => b.b.width * b.b.height - a.b.width * a.b.height); // long names first
+    const gap = 3 * unitsPerPx;
+    const placed = [];
+    const hits = (b) => placed.some((p) => b.x < p.x + p.w && p.x < b.x + b.w && b.y < p.y + p.h && p.y < b.y + b.h);
+    for (const { t, b } of items) {
+      const h = b.height;
+      const w = b.width;
+      const tries = [[0, 0], [0, -0.85 * h], [0, 0.85 * h], [-0.3 * w, 0], [0.3 * w, 0], [0, -1.7 * h], [0, 1.7 * h], [-0.3 * w, -0.85 * h], [0.3 * w, 0.85 * h], [-0.3 * w, 0.85 * h], [0.3 * w, -0.85 * h]];
+      const spot = tries.map(([dx, dy]) => ({ dx, dy, x: b.x + dx - gap, y: b.y + dy - gap, w: w + gap * 2, h: h + gap * 2 })).find((c) => !hits(c));
+      if (!spot) {
+        t.classList.add('nep-hide');
+        continue;
+      }
+      t.setAttribute('x', (+t.dataset.ox + spot.dx).toFixed(1));
+      t.setAttribute('y', (+t.dataset.oy + spot.dy).toFixed(1));
+      placed.push(spot);
+      labelBoxes.set(t, spot);
+    }
+  }
+
+  // A label with a marker on it fades, so the marker reads clearly.
+  function dimLabels(units) {
+    const r = (BADGE_PX + 4) * unitsPerPx;
+    for (const [t, b] of labelBoxes) {
+      const under = units.some((u) => u.x + r > b.x && u.x - r < b.x + b.w && u.y + r > b.y && u.y - r < b.y + b.h);
+      t.classList.toggle('nep-dim', under);
     }
   }
 
@@ -675,9 +778,21 @@
     targetsEl.dataset.near = close.length ? '1' : '0';
     const head = `<div class="h-head">${ico('radar')}<span class="h-title">Поблизу ваших районів</span>${countChip(close.length, TARGET_WORD)}${liveHtml()}</div>`;
     if (!mine.length) return head + `<div class="h-empty">Райони не обрано</div>`;
-    if (close.length) return head + listHtml(close, now);
-    const best = nearestTarget(now);
-    return head + `<div class="h-empty">Поруч нікого · до ${opts.alertKm} км</div>` + (best ? `<div class="h-list">${entryHtml(best.t, now)}</div>` : '');
+    if (close.length >= FULL_ROWS) return head + listHtml(close, now);
+    // Room left: the next nearest targets beyond the radius, under a quiet divider.
+    const ids = new Set(close.map((t) => t.id));
+    const further = pointTargets()
+      .filter((t) => !ids.has(t.id))
+      .map((t) => ({ t, near: nearOf(t, now) }))
+      .filter((x) => x.near)
+      .sort((a, b) => a.near.km - b.near.km)
+      .slice(0, close.length ? FULL_ROWS - close.length : 4)
+      .map((x) => x.t);
+    const fresh = (t) => (freshUntil.get(t.id) || 0) > now;
+    let body = close.map((t) => entryHtml(t, now, { fresh: fresh(t) })).join('');
+    if (!close.length) body += `<div class="h-sep">Поруч нікого · до ${opts.alertKm} км</div>`;
+    if (further.length) body += (close.length ? `<div class="h-sep">Далі</div>` : '') + further.map((t) => entryHtml(t, now, { compact: true })).join('');
+    return head + `<div class="h-list">${body}</div>`;
   }
 
   function detailsHtml(t, now) {
@@ -830,10 +945,24 @@
     }
   }
 
+  // Tiles in even rows that fill the width: 7 tiles become 4 + 3, never 6 + 1 with a gap.
+  function balance(box, minWidth, gap = 6) {
+    if (!box) return;
+    const n = box.children.length;
+    const width = box.clientWidth - 16; // horizontal padding
+    if (!n || width <= 0) return;
+    const fit = Math.max(1, Math.floor((width + gap) / (minWidth + gap)));
+    const rows = Math.ceil(n / fit);
+    const cols = String(Math.ceil(n / rows));
+    if (box.style.getPropertyValue('--cols') !== cols) box.style.setProperty('--cols', cols);
+  }
+
   // The targets panel goes left or right of the region card; one column on a narrow widget.
   function layoutDock() {
     dock.classList.toggle('right', opts.cardSide === 'right');
     dock.classList.toggle('narrow', dock.clientWidth < 520);
+    balance(tilesEl, 140);
+    balance($('sys'), 168);
   }
 
   // Grows the widget once when the dock and tiles would squeeze the map (as widget.js does for the PC tiles).
@@ -1040,6 +1169,8 @@
       return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys), rings: rr };
     });
     if (bridge.getState) alertState = (await bridge.getState()) || {};
+    // widget.js rebuilds the PC tiles every 2 s; keep their rows even.
+    if ($('sys')) new MutationObserver(() => balance($('sys'), 168)).observe($('sys'), { childList: true });
     if (bridge.onState) {
       bridge.onState((s) => {
         alertState = s || {};
