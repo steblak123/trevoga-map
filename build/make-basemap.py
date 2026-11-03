@@ -381,13 +381,13 @@ def build_vector(m, proj, data_dir):
 
     # Roads: motorway/trunk, primary, secondary (OSM).
     print('roads…')
-    cls = {'motorway': 'm', 'trunk': 'm', 'primary': 'p', 'secondary': 's'}
+    cls = {'motorway': 'm', 'trunk': 'm', 'primary': 'p', 'secondary': 's', 'tertiary': 't'}
     rows = read_geoparquet(os.path.join(data_dir, 'roads.parquet'), ['highway'], lambda p: p['highway'] in cls)
-    by = {'m': [], 'p': [], 's': []}
+    by = {'m': [], 'p': [], 's': [], 't': []}
     for p, g in rows:
         for line in lines_of(to_map(g, proj)):
             by[cls[p['highway']]].append(line)
-    tol = {'m': U(0.12), 'p': U(0.14), 's': U(0.18)}
+    tol = {'m': U(0.1), 'p': U(0.12), 's': U(0.15), 't': U(0.2)}
     res['roads'] = {}
     for c, lines in by.items():
         ms = merged(lines, tol[c], U(0.4))
@@ -484,13 +484,57 @@ def build_vector(m, proj, data_dir):
         pop = pop_of(p['population'])
         rank = 1 if pop >= 500000 else 2 if pop >= 150000 else 3 if p['place'] == 'city' or pop >= 40000 else 4 if pop >= 12000 else 5
         add(name, pt.x, pt.y, rank)
+    # Villages (rank 6): only their names for close zoom, checked against a grid instead of all places.
+    grid = {}
+    cell = U(3)
+    for q in places:
+        grid.setdefault((int(q[0] // cell), int(q[1] // cell)), []).append(q)
+    vrows = read_geoparquet(
+        os.path.join(data_dir, 'populated_places.parquet'), ['name', 'name_uk', 'place'], lambda p: p['place'] == 'village'
+    )
+    villages = 0
+    for p, g in vrows:
+        name = (p['name_uk'] or p['name'] or '').strip()
+        if not name or len(name) > 40:
+            continue
+        pt = g if g.geom_type == 'Point' else g.representative_point()
+        x, y = proj.fwd(np.array([pt.x]), np.array([pt.y]))
+        x, y = float(x[0]), float(y[0])
+        if not land_p.contains(Polygon([(x - .01, y - .01), (x + .01, y - .01), (x + .01, y + .01)])):
+            continue
+        gx, gy = int(x // cell), int(y // cell)
+        near = [q for dx in (-1, 0, 1) for dy in (-1, 0, 1) for q in grid.get((gx + dx, gy + dy), [])]
+        if any((x - q[0]) ** 2 + (y - q[1]) ** 2 < U(0.4) ** 2 or (q[2] == name and (x - q[0]) ** 2 + (y - q[1]) ** 2 < U(3) ** 2) for q in near):
+            continue  # a node and an area of the same village, or the village part of a town
+        q = [round(x, 2), round(y, 2), name, 6]
+        grid.setdefault((gx, gy), []).append(q)
+        places.append(q)
+        villages += 1
     places.sort(key=lambda r: (r[3], r[2]))
-    res['places'] = places
-    print(f'  {len(places)} places ({n_ne} from Natural Earth)', {r: sum(1 for q in places if q[3] == r) for r in range(6)})
+    print(f'  {len(places)} places ({n_ne} from Natural Earth, {villages} villages)', {r: sum(1 for q in places if q[3] == r) for r in range(7)})
+
+    # Raion names: at the point of each raion farthest from its border (cities have their own town name).
+    from shapely.ops import polylabel
+    raions = []
+    for r in m['raions']:
+        if r['uid'] in (30, 31):
+            continue
+        polys = [make_valid(Polygon(ring)) for ring in path_rings(r['d']) if len(ring) >= 3]
+        poly = max((g for p in polys for g in polys_of(p)), key=lambda g: g.area)
+        c = polylabel(poly, tolerance=0.5)
+        raions.append([round(c.x, 1), round(c.y, 1), r['name'].replace(' район', ''), r['uid']])
+    print(f'  {len(raions)} raion names')
+    path = os.path.join(OUT, 'places.js')
+    with open(path, 'w', encoding='utf8') as f:
+        f.write('// Town, village and raion names in map.json units; built by build/make-basemap.py (sources: basemap/LICENSE.md).\n')
+        f.write('window.NeptunBasemapPlaces = ')
+        json.dump({'places': places, 'raions': raions}, f, ensure_ascii=False, separators=(',', ':'))
+        f.write(';\n')
+    print(f'{path}: {os.path.getsize(path) / 1e6:.2f} MB')
 
     path = os.path.join(OUT, 'vector.js')
     with open(path, 'w', encoding='utf8') as f:
-        f.write('// Offline map layers in map.json units; built by build/make-basemap.py (sources: basemap/LICENSE.md).\n')
+        f.write('// Roads, railways, water and built-up areas in map.json units; built by build/make-basemap.py (sources: basemap/LICENSE.md).\n')
         f.write('window.NeptunBasemapData = ')
         json.dump(res, f, ensure_ascii=False, separators=(',', ':'))
         f.write(';\n')

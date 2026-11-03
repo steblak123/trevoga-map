@@ -20,6 +20,11 @@
     ['plain', /шахед|мопед|бпла|герань|гербер|дрон|балалайк|🛵|🏍/i],
   ];
   const ALERT_LINE = /відбій|тривог|укритт/i; // air-raid notices name districts, not targets
+  // Explosions: a line that says they were heard or hit, not a warning that they may come.
+  const BOOM = /вибух|прил[іи]т|прильот|влучанн|детонац/i;
+  const NOT_BOOM = /не\s+чут|не\s+було|можлив|без\s+вибух|загроз|якщо|попередж|не\s+підтвердж|бережіть|укритт|фейк/i;
+  const BOOM_MS = 15 * 60000; // an explosion stays on the map this long
+  const OFFICIAL = /повітряні сили|air force|kpszsu/i;
   // Line kinds that may speak of a target of each kind (null: a line that names no kind at all).
   // The first one is the target's own kind.
   const FITS = { uav: ['plain', 'jet', null], jet: ['jet', 'plain', null], fpv: ['fpv', null], recon: ['recon', 'plain', null], missile: ['missile', null], ballistic: ['missile', null], kab: ['kab', null] };
@@ -32,7 +37,7 @@
       .toLowerCase()
       .replace(/[’ʼ`'ь]/g, '')
       .replace(/[їі]/g, 'и')
-      .replace(/є/g, 'е')
+      .replace(/[єе]/g, 'и') // and е: "Київ" / "Києві" alternate the vowel
       .replace(/ґ/g, 'г')
       .replace(/ы/g, 'и')
       .replace(/э/g, 'е')
@@ -106,7 +111,7 @@
           if (!ws.length) continue;
           const keys = new Set(ws);
           for (let i = 0; i + 1 < ws.length; i++) keys.add(`${ws[i]} ${ws[i + 1]}`); // two-word places: "Біла Церква"
-          lines.push({ mode, keys, text: line.length > 120 ? line.slice(0, 119) + '…' : line });
+          lines.push({ mode, keys, text: line.length > 120 ? line.slice(0, 119) + '…' : line, boom: BOOM.test(line) && !NOT_BOOM.test(line) });
         }
         this.posts.set(key, { at, channel: String(m.channel || '').trim(), lines });
         added = true;
@@ -143,10 +148,42 @@
       return list.filter((x) => x.at >= since);
     }
 
-    // { mode: 'jet' | 'plain', at, channel } from the newest Shahed post naming the track's place, or null.
+    // Jet or plain from the Shahed posts naming the track's place: { mode, at, channel } or null.
+    // A jet needs the Air Force or two channels: one channel alone often calls any fast-looking Shahed
+    // "реактивний", and NEPTUN's own map then still shows an ordinary one — that is mode 'maybe'.
     about(t) {
       if (!t || t.type !== 'uav') return null;
-      return this.mentions(t).find((x) => x.mode === 'jet' || x.mode === 'plain') || null;
+      const list = this.mentions(t).filter((x) => x.mode === 'jet' || x.mode === 'plain');
+      const jets = list.filter((x) => x.mode === 'jet');
+      const channels = new Set(jets.map((x) => x.channel));
+      const official = jets.find((x) => OFFICIAL.test(x.channel));
+      if (official || channels.size >= 2) {
+        const x = official || jets[0];
+        return { mode: 'jet', at: x.at, channel: x.channel };
+      }
+      if (jets.length) return { mode: 'maybe', at: jets[0].at, channel: jets[0].channel };
+      const plain = list[0];
+      return plain ? { mode: 'plain', at: plain.at, channel: plain.channel } : null;
+    }
+
+    // Explosions of the last 15 minutes: [{ place, at, sources: [{ channel, at, text }] }], one per town;
+    // find(keys) names the town a line speaks of (basemap.js), or null.
+    booms(find, now = Date.now()) {
+      const byPlace = new Map();
+      for (const p of this.posts.values()) {
+        if (now - p.at > BOOM_MS) continue;
+        for (const line of p.lines) {
+          if (!line.boom) continue;
+          const place = find([...line.keys]);
+          if (!place) continue;
+          const e = byPlace.get(place) || { place, at: 0, sources: [] };
+          e.at = Math.max(e.at, p.at);
+          if (!e.sources.some((x) => x.channel === p.channel)) e.sources.push({ channel: p.channel, at: p.at, text: line.text });
+          byPlace.set(place, e);
+        }
+      }
+      for (const e of byPlace.values()) e.sources.sort((a, b) => b.at - a.at);
+      return [...byPlace.values()];
     }
 
     // Up to n channels that wrote about this target lately: [{ channel, at, text }]. Posts that name the
@@ -169,6 +206,7 @@
     }
   }
 
+  Intel.placeKey = placeKey; // the same keys for town names (basemap.js)
   root.NeptunIntel = Intel;
   if (typeof module === 'object' && module.exports) module.exports = { Intel, stem, placeKey };
 })(typeof self !== 'undefined' ? self : this);

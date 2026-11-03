@@ -70,17 +70,21 @@
     hint = fn;
   }
   const saysJet = (s) => !!s && JET.test(s) && !NOT_JET.test(s);
-  // { kind, by }: by is what told a Shahed's kind: 'subtype' | 'text' | 'post' | 'speed', or null
-  // when nothing did (then it is taken for an ordinary one, as most are).
+  // { kind, by }: by is what told a Shahed's kind: 'subtype' | 'text' | 'post' | 'speed', 'maybe' (one
+  // channel says jet: still counted as ordinary, as on NEPTUN's map), or null when nothing did (then it is
+  // taken for an ordinary one, as most are).
   function classify(t) {
     if (t.type === 'fpv' || (t.type === 'uav' && FPV.test(t.title || ''))) return { kind: 'fpv', by: null };
     if (t.type !== 'uav') return { kind: TYPES[t.type] ? t.type : 'unknown', by: null };
     if (t.subtype) return { kind: t.subtype === 'jet' ? 'jet' : 'uav', by: 'subtype' };
     if (saysJet(t.title) || saysJet(t.explanationShort)) return { kind: 'jet', by: 'text' };
     const h = hint ? hint(t) : null;
-    if (h) return { kind: h === 'jet' ? 'jet' : 'uav', by: 'post' };
     const v = t.velocity && t.velocity.speedKmh;
-    if (Number.isFinite(v) && v >= JET_KMH) return { kind: 'jet', by: 'speed' };
+    const fast = Number.isFinite(v) && v >= JET_KMH;
+    if (h === 'jet') return { kind: 'jet', by: 'post' };
+    if (h === 'maybe') return fast ? { kind: 'jet', by: 'speed' } : { kind: 'uav', by: 'maybe' };
+    if (h) return { kind: 'uav', by: 'post' };
+    if (fast) return { kind: 'jet', by: 'speed' };
     return { kind: 'uav', by: null };
   }
   const kindOf = (t) => classify(t).kind;

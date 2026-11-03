@@ -4,8 +4,9 @@
 // Other scripts listen for the "nep-zoom" event on #map; "nep-zoom-mine" asks to show the selected regions.
 (function () {
   const svg = document.getElementById('map');
-  const MAX = 8; // the most a region can be enlarged
-  const STEP = 1.6; // one button press
+  const MAX = 40; // the most the map can be enlarged: a 30–40 km wide view
+  const STEP = 1.8; // one button press
+  let anim = 0;
   let base = null; // [x, y, w, h]: the whole-map viewBox set by widget.js
   let view = null;
   let setting = false; // our own viewBox change, not the one from widget.js
@@ -51,8 +52,21 @@
     return m ? [(clientX - m.e) / m.a, (clientY - m.f) / m.d] : center();
   }
 
+  // A button press zooms in a few frames instead of one jump.
+  function smoothZoom(factor, px, py) {
+    cancelAnimationFrame(anim);
+    const steps = 7;
+    const f = factor ** (1 / steps);
+    let i = 0;
+    const step = () => {
+      zoomAt(f, px, py);
+      if (++i < steps) anim = requestAnimationFrame(step);
+    };
+    step();
+  }
+
   const api = {
-    zoomBy: (f) => zoomAt(f, ...center()),
+    zoomBy: (f) => smoothZoom(f, ...center()),
     reset: () => base && apply(base),
     // Fits a box of map units (with a margin), e.g. the selected regions.
     fit(x0, y0, x1, y1) {
@@ -107,12 +121,17 @@
 
   // ---------- wheel and drag ----------
 
+  // The wheel zooms at the cursor, in proportion to how far it turned: one mouse notch ×1.25, a touchpad
+  // or a pinch (which comes as a wheel with Ctrl) smoothly.
   svg.addEventListener(
     'wheel',
     (e) => {
       if (!base) return;
       e.preventDefault();
-      zoomAt(e.deltaY < 0 ? 1.25 : 0.8, ...toMap(e.clientX, e.clientY));
+      cancelAnimationFrame(anim);
+      const dy = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaY; // lines -> pixels
+      const f = Math.min(2, Math.max(0.5, Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0022))));
+      zoomAt(f, ...toMap(e.clientX, e.clientY));
     },
     { passive: false },
   );

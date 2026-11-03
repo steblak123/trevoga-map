@@ -40,12 +40,23 @@
 .nep-marker.adv { opacity: 0.7; }
 .nep-marker.adv .halo { stroke: #8a96a8; stroke-dasharray: 3 2; }
 .nep-marker.stale { opacity: 0.45; }
+/* A Shahed without a course far from you: only a place near which it was named — faint, a little smaller. */
+.nep-marker.faint { opacity: 0.62; }
+.nep-marker.faint .halo { stroke-dasharray: 2.4 2; }
+.nep-marker.faint:hover { opacity: 1; }
 /* pinned to the map edge: the pointer shows where the target is */
 .nep-marker.edge .halo { stroke-dasharray: 4 2.5; }
 .nep-marker.edge .ptr { fill: #fff; }
 /* several targets in one marker */
 .nep-marker.group .halo { stroke-width: 3.4; }
 .nep-marker.group .cnt { font-size: 11px; }
+
+/* explosions from the channel posts */
+.nep-boom { cursor: default; }
+.nep-boom .ring { fill: rgba(255, 120, 30, 0.18); stroke: rgba(255, 170, 60, 0.75); stroke-width: 1.4; }
+.nep-boom .burst { fill: #ffb020; stroke: #7a2a00; stroke-width: 1.1; stroke-linejoin: round; }
+.nep-boom .core { fill: #fff3c4; }
+.nep-boom.fresh .ring { transform-box: fill-box; transform-origin: center; animation: nep-pulse 1.8s ease-out infinite; }
 
 /* where a target came from and where it heads (± spread) */
 .nep-trk .from {
@@ -84,7 +95,7 @@
 #nep-leads .lead { stroke: rgba(255, 255, 255, 0.75); stroke-width: 1px; vector-effect: non-scaling-stroke; }
 #nep-leads .spot { fill: #fff; stroke: #0b0f15; stroke-width: 1px; vector-effect: non-scaling-stroke; }
 #nep-layer, #nep-sel, #nep-tracks, #nep-area, #nep-leads { pointer-events: none; }
-#nep-markers { pointer-events: auto; }
+#nep-markers, #nep-booms { pointer-events: auto; }
 
 /* oblast named in a report without a point */
 #nep-area .nep-area {
@@ -358,6 +369,7 @@ a.h-b.src:hover { color: #fff; border-color: var(--h-cyan); }
 #nep-credit .nep-osm, #nep-credit .nep-eox { display: none; }
 body.nep-base-map #nep-credit .nep-osm, body.nep-base-sat #nep-credit .nep-eox { display: inline; }
 
+
 /* ---------- offline map layers (basemap.js) ---------- */
 #nep-base-sat, #nep-base-map, #nep-base-names { pointer-events: none; }
 #nep-base-sat image { image-rendering: auto; }
@@ -383,9 +395,12 @@ body.nep-base-sat #labels text { stroke: rgba(4, 7, 12, 0.92); }
 #nep-base-map .nb-m { stroke: #ffc45c; stroke-width: 1.7px; }
 #nep-base-map .nb-p { stroke: #eadcb0; stroke-width: 1.1px; }
 #nep-base-map .nb-s { stroke: rgba(205, 212, 224, 0.72); stroke-width: 0.8px; }
+#nep-base-map .nb-ct { stroke: rgba(6, 9, 14, 0.5); stroke-width: 1.5px; }
+#nep-base-map .nb-t { stroke: rgba(190, 199, 214, 0.5); stroke-width: 0.7px; }
 /* Minor roads come in as you zoom in (data-z from basemap.js). */
-#nep-base-map[data-z="1"] :is(.nb-p, .nb-cp, .nb-s, .nb-cs),
-#nep-base-map[data-z="2"] :is(.nb-s, .nb-cs) { display: none; }
+#nep-base-map[data-z="1"] :is(.nb-p, .nb-cp, .nb-s, .nb-cs, .nb-t, .nb-ct),
+#nep-base-map[data-z="2"] :is(.nb-s, .nb-cs, .nb-t, .nb-ct),
+#nep-base-map[data-z="3"] :is(.nb-t, .nb-ct) { display: none; }
 /* The whole country: main roads only, thinner, no small rivers or railways. */
 #nep-base-map[data-z="1"] :is(.nb-r2, .nb-rail) { display: none; }
 #nep-base-map[data-z="1"] .nb-m { stroke-width: 1.2px; stroke: rgba(255, 196, 92, 0.8); }
@@ -396,7 +411,27 @@ body.nep-base-sat #nep-base-map :is(.nb-urban, .nb-water, .nb-r1, .nb-r2) { disp
 body.nep-base-sat #nep-base-map .nb-m { stroke: #ffd36e; }
 body.nep-base-sat #nep-base-map .nb-p { stroke: #fff1c9; }
 body.nep-base-sat #nep-base-map .nb-s { stroke: rgba(255, 255, 255, 0.62); }
+body.nep-base-sat #nep-base-map .nb-t { stroke: rgba(255, 255, 255, 0.42); }
 body.nep-base-sat #nep-base-map .nb-rail { stroke: rgba(235, 240, 248, 0.55); }
+/* "Темний супутник": the image dimmed by the regions' own fill, pale steel-blue roads, dark water with a
+   faint coast, alerts as a light tint with a clear outline. */
+body.nep-base-dark {
+  --calm: rgba(4, 7, 12, 0.5);
+  --red: rgba(239, 68, 68, 0.26);
+  --yellow: rgba(232, 180, 40, 0.24);
+  --border-raion: rgba(147, 176, 204, 0.14);
+  --border-oblast: rgba(160, 190, 220, 0.5);
+}
+body.nep-base-dark .st-A path { stroke: rgba(239, 68, 68, 0.62); }
+body.nep-base-dark .st-A.lvl-yellow path { stroke: rgba(232, 180, 40, 0.62); }
+body.nep-base-dark #nep-base-map .nb-water { display: inline; fill: rgba(10, 33, 56, 0.55); stroke: rgba(143, 208, 255, 0.28); }
+body.nep-base-dark #nep-base-map .nb-r1 { display: inline; stroke: rgba(143, 208, 255, 0.3); stroke-width: 1px; }
+body.nep-base-dark #nep-base-map .nb-m { stroke: #93b0cc; stroke-width: 1.3px; }
+body.nep-base-dark #nep-base-map .nb-p { stroke: rgba(147, 176, 204, 0.8); stroke-width: 0.95px; }
+body.nep-base-dark #nep-base-map .nb-s { stroke: rgba(147, 176, 204, 0.55); }
+body.nep-base-dark #nep-base-map .nb-t { stroke: rgba(147, 176, 204, 0.36); }
+body.nep-base-dark #nep-base-map .nb-rail { stroke: rgba(147, 176, 204, 0.35); }
+body.nep-base-dark #nep-base-map :is(.nb-cm, .nb-cp, .nb-cs, .nb-ct) { stroke: rgba(2, 4, 8, 0.55); }
 
 #nep-base-names text {
   fill: #dfe6ef;
@@ -409,8 +444,29 @@ body.nep-base-sat #nep-base-map .nb-rail { stroke: rgba(235, 240, 248, 0.55); }
   stroke-linejoin: round;
 }
 #nep-base-names .r0 text, #nep-base-names .r1 text { fill: #fff; font-weight: 600; }
+#nep-base-names .r6 text { fill: #b9c4d2; font-weight: 400; }
+#nep-base-names .r6 circle { fill: #9aa7b8; }
+#nep-base-names .nb-raion { fill: rgba(176, 194, 216, 0.6); font-weight: 600; text-anchor: middle; }
+#nep-base-names .nb-raion.mine { fill: #7fdcff; }
 #nep-base-names circle { fill: #e8edf3; stroke: rgba(6, 10, 16, 0.9); stroke-width: 1px; vector-effect: non-scaling-stroke; }
 #nep-base-names .r0 circle { fill: #ffd36e; }
 body.no-labels #nep-base-names { display: none; }
 .nep-targets .h-foot { overflow: hidden; }
 .nep-targets .h-foot > * { flex: none; }
+
+/* ---------- events line under the map (ticker.js) ---------- */
+#nep-ticker { flex: none; display: flex; align-items: center; gap: 8px; height: 24px; margin: 2px 8px 0; padding: 0 8px; overflow: hidden; }
+#nep-ticker[hidden] { display: none; }
+#nep-ticker .tk-head { flex: none; display: inline-flex; align-items: center; gap: 5px; font: 700 10px var(--h-num); letter-spacing: 0.8px; text-transform: uppercase; color: var(--h-steel); }
+#nep-ticker .tk-head i { width: 6px; height: 6px; border-radius: 50%; background: #ff4d4f; box-shadow: 0 0 6px #ff4d4f; animation: blink 1.4s infinite; }
+#nep-ticker .tk-view { flex: 1; min-width: 0; overflow: hidden; mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent); }
+#nep-ticker .tk-strip { display: inline-flex; gap: 22px; white-space: nowrap; will-change: transform; }
+#nep-ticker .tk-strip.run { animation: nep-tk var(--tk-time, 30s) linear infinite; padding-right: 22px; }
+#nep-ticker:hover .tk-strip { animation-play-state: paused; }
+@keyframes nep-tk { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+#nep-ticker .tk-it { display: inline-flex; align-items: baseline; gap: 5px; font: 400 11.5px var(--h-txt); color: #cfd8e3; }
+#nep-ticker .tk-it i { align-self: center; width: 7px; height: 7px; border-radius: 50%; background: var(--c); box-shadow: 0 0 5px var(--c); }
+#nep-ticker .tk-it time { font: 500 10.5px var(--h-num); color: var(--h-steel); font-variant-numeric: tabular-nums; }
+#nep-ticker .tk-it b { font-weight: 600; color: color-mix(in srgb, var(--c) 55%, #fff); }
+#nep-ticker .tk-it em { font-style: normal; color: var(--h-steel); }
+#nep-ticker .tk-it.quiet { color: var(--h-steel); }

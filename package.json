@@ -1,7 +1,7 @@
 {
   "name": "trevoga-map",
   "productName": "Карта тривог",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Віджет карти повітряних тривог України для робочого столу (дані: alerts.in.ua)",
   "author": "steblak123",
   "license": "MIT",

@@ -4,25 +4,44 @@
   const RAD = Math.PI / 180;
   const EARTH_KM = 6371;
 
-  // Ellipsoidal Lambert conformal conic (2 standard parallels, WGS84), Snyder 1987, eq. 15-1..15-10.
+  // Ellipsoidal Lambert conformal conic (2 standard parallels, WGS84), Snyder 1987, eq. 15-1..15-11.
   // Matches the "+proj=lcc +datum=WGS84" projection build/make-map.js uses for map.json.
-  function lcc({ lat1, lat2, lat0, lon0 }) {
-    const a = 6378137;
-    const e = Math.sqrt(0.00669437999014); // WGS84 first eccentricity
-    const m = (phi) => Math.cos(phi) / Math.sqrt(1 - (e * Math.sin(phi)) ** 2);
-    const t = (phi) => {
-      const es = e * Math.sin(phi);
-      return Math.tan(Math.PI / 4 - phi / 2) / ((1 - es) / (1 + es)) ** (e / 2);
-    };
+  const LCC_A = 6378137;
+  const LCC_E = Math.sqrt(0.00669437999014); // WGS84 first eccentricity
+  const lccT = (phi) => {
+    const es = LCC_E * Math.sin(phi);
+    return Math.tan(Math.PI / 4 - phi / 2) / ((1 - es) / (1 + es)) ** (LCC_E / 2);
+  };
+  function lccConsts({ lat1, lat2, lat0 }) {
+    const m = (phi) => Math.cos(phi) / Math.sqrt(1 - (LCC_E * Math.sin(phi)) ** 2);
     const p1 = lat1 * RAD;
     const p2 = lat2 * RAD;
-    const n = (Math.log(m(p1)) - Math.log(m(p2))) / (Math.log(t(p1)) - Math.log(t(p2)));
-    const F = m(p1) / (n * t(p1) ** n);
-    const rho0 = a * F * t(lat0 * RAD) ** n;
+    const n = (Math.log(m(p1)) - Math.log(m(p2))) / (Math.log(lccT(p1)) - Math.log(lccT(p2)));
+    const F = m(p1) / (n * lccT(p1) ** n);
+    return { n, F, rho0: LCC_A * F * lccT(lat0 * RAD) ** n };
+  }
+
+  function lcc(proj) {
+    const { n, F, rho0 } = lccConsts(proj);
     return (lat, lon) => {
-      const rho = a * F * t(lat * RAD) ** n;
-      const theta = n * (lon - lon0) * RAD;
+      const rho = LCC_A * F * lccT(lat * RAD) ** n;
+      const theta = n * (lon - proj.lon0) * RAD;
       return [rho * Math.sin(theta), rho0 - rho * Math.cos(theta)];
+    };
+  }
+
+  // Projected metres -> [lat, lon] (the inverse of lcc).
+  function lccInverse(proj) {
+    const { n, F, rho0 } = lccConsts(proj);
+    return (x, y) => {
+      const dy = rho0 - y;
+      const t = (Math.hypot(x, dy) / (LCC_A * F)) ** (1 / n);
+      let phi = Math.PI / 2 - 2 * Math.atan(t);
+      for (let i = 0; i < 6; i++) {
+        const es = LCC_E * Math.sin(phi);
+        phi = Math.PI / 2 - 2 * Math.atan(t * ((1 - es) / (1 + es)) ** (LCC_E / 2));
+      }
+      return [phi / RAD, Math.atan2(x, dy) / n / RAD + proj.lon0];
     };
   }
 
@@ -33,6 +52,12 @@
       const [x, y] = fwd(lat, lon);
       return [(x - proj.x0) * proj.k, (proj.y1 - y) * proj.k];
     };
+  }
+
+  // map.json units -> [lat, lon].
+  function mapUnprojector(proj) {
+    const inv = lccInverse(proj);
+    return (X, Y) => inv(X / proj.k + proj.x0, proj.y1 - Y / proj.k);
   }
 
   // Point reached from lat/lon after `km` along the great circle with initial bearing `deg`.
@@ -131,7 +156,7 @@
     return best;
   }
 
-  const api = { lcc, mapProjector, dest, bearing, distanceKm, compass, pathRings, insideRings, ringsDistance };
+  const api = { lcc, lccInverse, mapProjector, mapUnprojector, dest, bearing, distanceKm, compass, pathRings, insideRings, ringsDistance };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.Geo = api;
 })(typeof self !== 'undefined' ? self : this);
