@@ -470,3 +470,78 @@ body.no-labels #nep-base-names { display: none; }
 #nep-ticker .tk-it b { font-weight: 600; color: color-mix(in srgb, var(--c) 55%, #fff); }
 #nep-ticker .tk-it em { font-style: normal; color: var(--h-steel); }
 #nep-ticker .tk-it.quiet { color: var(--h-steel); }
+
+/* ---------- "Акуратний" style of everything under the map (settings: neptun.style = 'calm') ----------
+   One quiet font, flat panels, no glow, gradients or coloured edges; colour is left to the status dots,
+   an alert and a target close by. */
+body.nep-calm {
+  --h-num: 'Fira Sans Condensed', 'Segoe UI', sans-serif;
+  --h-line: rgba(255, 255, 255, 0.08);
+  --calm-panel: rgba(13, 17, 24, 0.84);
+  --calm-ink: #e3e9f0;
+  --calm-text: #c4cdd8;
+}
+body.nep-calm .h-pan {
+  background: var(--calm-panel);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+}
+body.nep-calm .nep-region, body.nep-calm .nep-targets { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28); }
+body.nep-calm .nep-region .h-head, body.nep-calm .nep-targets .h-head { background: none; }
+body.nep-calm .h-head .h-ico, body.nep-calm .nep-region .h-head > .h-ico, body.nep-calm .nep-targets .h-head > .h-ico { color: var(--h-steel); }
+body.nep-calm .h-title { font-weight: 600; font-size: 12.5px; letter-spacing: 0; }
+body.nep-calm .h-count { background: rgba(255, 255, 255, 0.1); color: var(--calm-ink); font-weight: 600; }
+body.nep-calm .nep-targets[data-near='1'] .h-count { background: rgba(255, 159, 67, 0.22); color: #ffc58f; }
+body.nep-calm .h-live i.live { box-shadow: none; }
+
+/* badges: plain values with a grey icon */
+body.nep-calm .h-b {
+  --bc: var(--calm-text);
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.09);
+  color: var(--calm-text);
+  font-weight: 500;
+}
+body.nep-calm .h-b .h-ico { color: var(--h-steel); }
+body.nep-calm .h-b small { color: var(--h-steel); }
+body.nep-calm .h-st { color: var(--calm-ink); background: transparent; border-color: rgba(255, 255, 255, 0.09); }
+body.nep-calm .h-st::before { box-shadow: none; }
+body.nep-calm .h-st.hit, body.nep-calm .h-st.alert { color: #ff8a8f; }
+body.nep-calm .h-b.jet { color: #ff9a8a; }
+body.nep-calm .h-b.note { color: var(--calm-text); }
+
+/* entries: a thin red edge only for a target that is a real risk */
+body.nep-calm .h-ent { border-left-color: transparent; }
+body.nep-calm .h-ent.r2 { border-left: 2px solid rgba(255, 77, 87, 0.75); }
+body.nep-calm .h-ent:hover { background: rgba(255, 255, 255, 0.04); transform: none; }
+body.nep-calm .h-ent-ico { background: transparent; border-color: rgba(255, 255, 255, 0.1); color: color-mix(in srgb, var(--c) 55%, #9aa7b8); }
+body.nep-calm .h-ent-name, body.nep-calm .h-v .h-tname { color: var(--calm-ink); }
+body.nep-calm .h-ent-name em { color: var(--calm-text); }
+body.nep-calm .h-risk .seg i { box-shadow: none !important; }
+body.nep-calm .h-risk.l0 { --rc: #8fd4a8; }
+body.nep-calm .h-risk.l1 { --rc: #e8cf7a; }
+
+/* count tiles and the PC tiles: flat, white numbers, one quiet line colour */
+body.nep-calm .nep-tile, body.nep-calm #sys > .tile {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--calm-panel);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+}
+body.nep-calm .nep-tile:hover, body.nep-calm #sys > .tile:hover { transform: none; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25); border-color: rgba(255, 255, 255, 0.16); }
+body.nep-calm .nep-tn, body.nep-calm #sys .tile .v { color: var(--calm-ink); text-shadow: none; font-weight: 600; }
+body.nep-calm .nep-tn { font-size: 17px; }
+body.nep-calm .nep-tl .h-ico { color: var(--h-steel); }
+body.nep-calm .nep-spark, body.nep-calm #sys .tile .spark { border-color: rgba(255, 255, 255, 0.08); background: rgba(0, 0, 0, 0.22); }
+body.nep-calm .nep-spark .area, body.nep-calm #sys .tile .spark .area { fill: rgba(143, 180, 216, 0.18); }
+body.nep-calm .nep-spark .line, body.nep-calm #sys .tile .spark .line, body.nep-calm #sys .tile .spark .line2 { stroke: #8fb4d8; }
+body.nep-calm .nep-tile.hot { animation: none; border-color: rgba(255, 159, 67, 0.45); }
+body.nep-calm .nep-tile.hot .nep-tn { color: #ffc58f; }
+body.nep-calm #sys .tile.hot .v { color: #ff8a8f; }
+
+/* events line and tooltips */
+body.nep-calm #nep-ticker .tk-head i { box-shadow: none; animation: none; }
+body.nep-calm #nep-ticker .tk-it i { box-shadow: none; width: 6px; height: 6px; }
+body.nep-calm #nep-ticker .tk-it b { color: var(--calm-ink); }
+body.nep-calm #nep-tip { border-left-color: rgba(255, 255, 255, 0.18) !important; }
+body.nep-calm #nep-tip .tt-sr b { color: #a9c7e2; }
+body.nep-calm .nep-targets .h-title { color: var(--calm-ink) !important; }

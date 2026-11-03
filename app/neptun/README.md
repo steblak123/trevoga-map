@@ -102,7 +102,7 @@
 Розділи «Карта» і «Цілі на карті» у вікні налаштувань. Значення — у `%APPDATA%\trevoga-map\settings.json`:
 
 ```json
-"neptun": { "markers": true, "panel": true, "hideFpv": false, "alert": true, "alertKm": 20, "alertSound": false, "cardSide": "left", "basemap": "none", "booms": true, "ticker": true }
+"neptun": { "markers": true, "panel": true, "hideFpv": false, "alert": true, "alertKm": 20, "alertSound": false, "cardSide": "left", "basemap": "none", "booms": true, "ticker": true, "style": "bright" }
 ```
 
 | Ключ | Що означає |
@@ -117,6 +117,7 @@
 | `basemap` | Підкладка: `none`, `map` (дороги), `sat` (супутник), `hybrid` (супутник і дороги), `dark` (темний супутник); працює й з вимкненими цілями |
 | `booms` | Вибухи з постів каналів на карті |
 | `ticker` | Стрічка подій під картою |
+| `style` | Вигляд панелей під картою: `bright` (яскравий) або `calm` (акуратний: один шрифт, без підсвітки й градієнтів, колір — лише в статусах) |
 
 ## Файли
 
