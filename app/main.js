@@ -5,6 +5,7 @@ const Regions = require('./regions');
 const native = require('./native');
 const sysmon = require('./sysmon');
 require('./neptun/main'); // NEPTUN targets layer: opens its links in the browser
+const update = require('./update/main'); // auto-update from GitHub (releases or a git clone)
 
 const ROOT = path.join(__dirname, '..');
 const API = 'https://api.alerts.in.ua';
@@ -304,7 +305,7 @@ async function poll() {
       state.error = null;
       trackTransitions();
     } catch (e) {
-      if (e.status === 401) state.error = 'Невірний або неактивний токен (401)';
+      if (e.status === 401) state.error = 'Неправильний або неактивний токен (401)';
       else if (e.status === 403) state.error = 'Доступ заборонено (403)';
       else if (e.status === 429) {
         state.error = 'Забагато запитів (429), пауза 1 хв';
@@ -629,6 +630,7 @@ function buildMenu() {
     { type: 'separator' },
     { label: 'Перевірити плашку і звук', click: testAlert },
     { label: 'Скинути положення', click: resetPosition },
+    ...update.menu(),
     { label: 'Вихід', click: () => app.quit() },
   ]);
 }
@@ -723,6 +725,12 @@ if (!app.requestSingleInstanceLock()) {
     createWidget();
     startPolling();
     if (!apiToken() || !settings.regions.length) setTimeout(openSettings, 800);
+    // Updates wait while an alert is on in your regions or a banner is up.
+    update.start({
+      settings: () => settings,
+      busy: () => !!overlayState || [...currentStatuses().values()].some((st) => st !== 'N'),
+      changed: refreshTray,
+    });
 
     screen.on('display-metrics-changed', () => setTimeout(applyLayer, 500));
     setInterval(() => queueHistory(), 15 * 60000);

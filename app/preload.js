@@ -27,4 +27,11 @@ contextBridge.exposeInMainWorld('bridge', {
     send: (channel, data) => ipcRenderer.send('neptun:' + channel, data),
     on: (channel, cb) => ipcRenderer.on('neptun:' + channel, (_e, data) => cb(data)),
   },
+  // Auto-update (app/update): state, "check now", "install now".
+  update: {
+    get: () => ipcRenderer.invoke('update:get'),
+    check: () => ipcRenderer.send('update:check'),
+    install: () => ipcRenderer.send('update:install'),
+    on: (cb) => ipcRenderer.on('update:state', (_e, data) => cb(data)),
+  },
 });

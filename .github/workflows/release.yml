@@ -1,0 +1,82 @@
+# Builds the Windows installer and publishes it as a GitHub release. Installed widgets check the
+# latest release every 6 hours and update themselves (app/update/main.js).
+#
+# Start a release in one of two ways:
+#   1. a version tag:   git tag v1.2.0   then   git push origin v1.2.0
+#   2. GitHub → Actions → Release → Run workflow (the version field may stay empty: next patch version)
+# What's new: the "## 1.2.0" section of CHANGELOG.md when there is one, else the commit subjects.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версія, наприклад 1.2.0 (порожньо — наступна)'
+        required: false
+
+permissions:
+  contents: write
+
+concurrency: release
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Version
+        id: v
+        shell: bash
+        run: |
+          prev=$(git describe --tags --abbrev=0 --match 'v*.*.*' HEAD 2>/dev/null || true)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            v="${GITHUB_REF_NAME#v}"
+            prev=$(git describe --tags --abbrev=0 --match 'v*.*.*' "HEAD^" 2>/dev/null || true)
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            v="${{ github.event.inputs.version }}"
+            v="${v#v}"
+          elif [[ -n "$prev" ]]; then
+            IFS=. read -r a b c <<< "${prev#v}"
+            v="$a.$b.$((c + 1))"
+          else
+            v=$(node -p "require('./package.json').version")
+          fi
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "Bad version: $v"; exit 1; fi
+          if git rev-parse -q --verify "refs/tags/v$v" >/dev/null && [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "Tag v$v already exists"; exit 1
+          fi
+          npm version "$v" --no-git-tag-version --allow-same-version
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+
+      # No API token is built in: every user enters their own (the alerts API terms forbid sharing one).
+      - name: Build and publish
+        run: npx electron-builder --win nsis --x64 --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          V: ${{ steps.v.outputs.version }}
+          PREV: ${{ steps.v.outputs.prev }}
+        run: |
+          if [[ -f CHANGELOG.md ]] && grep -q "^## $V\b" CHANGELOG.md; then
+            awk -v v="## $V" '$0 ~ "^## " { on = index($0, v) == 1; next } on' CHANGELOG.md > notes.md
+          else
+            git log --no-merges --pretty='- %s' ${PREV:+$PREV..}HEAD > notes.md
+          fi
+          gh release edit "v$V" --title "Карта тривог $V" --notes-file notes.md
