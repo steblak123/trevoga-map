@@ -1,0 +1,218 @@
+/* NEPTUN layer of widget.html: markers, panel of targets, target card. */
+
+/* ---------- markers (inside the map SVG) ---------- */
+
+.nep-marker { cursor: pointer; }
+.nep-marker .halo {
+  fill: rgba(10, 14, 20, 0.9);
+  stroke: var(--c);
+  stroke-width: 2.4;
+}
+.nep-marker:hover .halo { fill: #1f2938; }
+.nep-marker .glyph { color: #fff; fill: currentColor; }
+.nep-marker .s, .nep-ico .s { fill: none; stroke: currentColor; }
+.nep-marker .cnt {
+  fill: #fff;
+  font: 700 10px "Segoe UI", system-ui, sans-serif;
+  paint-order: stroke;
+  stroke: #0b0f15;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.nep-marker .pulse { fill: none; stroke: none; }
+.nep-marker .ptr { fill: var(--c); stroke: #0b0f15; stroke-width: 1.2; stroke-linejoin: round; }
+.nep-marker.nocourse .ptr { display: none; }
+.nep-marker.nocourse .glyph { opacity: 0.75; }
+.nep-marker.sel .halo { stroke: #fff; stroke-width: 2.8; }
+.nep-marker.sel .pulse {
+  stroke: var(--c);
+  stroke-width: 2.5;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: nep-pulse 1.6s ease-out infinite;
+}
+@keyframes nep-pulse {
+  from { transform: scale(1); opacity: 0.9; }
+  to { transform: scale(2.1); opacity: 0; }
+}
+.nep-marker.adv { opacity: 0.7; }
+.nep-marker.adv .halo { stroke: #8a96a8; stroke-dasharray: 3 2; }
+.nep-marker.stale { opacity: 0.45; }
+
+#nep-sel .unc {
+  fill: rgba(255, 255, 255, 0.07);
+  stroke: rgba(255, 255, 255, 0.45);
+  stroke-width: 1px;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+#nep-sel .trail {
+  fill: none;
+  stroke: var(--c);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+  opacity: 0.85;
+  vector-effect: non-scaling-stroke;
+}
+#nep-sel .course {
+  stroke: #fff;
+  stroke-width: 1.6px;
+  stroke-dasharray: 6 4;
+  opacity: 0.85;
+  vector-effect: non-scaling-stroke;
+}
+#nep-layer, #nep-sel { pointer-events: none; }
+#nep-markers { pointer-events: auto; }
+
+/* ---------- panel ---------- */
+
+#nep-panel {
+  position: absolute;
+  left: 6px;
+  top: 19px;
+  max-width: calc(100% - 44px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  z-index: 3;
+  pointer-events: none;
+  font-size: 11px;
+  text-shadow: 0 1px 2px #000, 0 0 5px rgba(0, 0, 0, 0.8);
+}
+#nep-panel[hidden] { display: none; }
+#nep-panel.compact .nep-chips, #nep-panel.compact .nep-near { display: none; }
+.nep-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.nep-chips:empty { display: none; }
+.nep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px 0 5px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 7px;
+  background: rgba(12, 16, 23, 0.86);
+  color: #fff;
+  font: 600 12px/1 "Segoe UI", system-ui, sans-serif;
+  text-shadow: none;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.nep-chip:hover { background: rgba(32, 42, 58, 0.95); }
+.nep-chip.area { color: #cfd8e3; font-weight: 500; }
+.nep-chip.area b { color: #fff; font-weight: 700; }
+.nep-ico { width: 15px; height: 15px; color: var(--c, #fff); fill: currentColor; flex: none; }
+.nep-none, .nep-meta { color: #b7c2d0; }
+.nep-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #8a96a8;
+  vertical-align: 0;
+}
+.nep-dot.live { background: #3fae5a; }
+.nep-dot.reconnecting, .nep-dot.connecting { background: #ff9f0a; animation: nep-blink 1s infinite; }
+@keyframes nep-blink { 50% { opacity: 0.3; } }
+#nep-panel a, #nep-card a { color: #8fd8ff; text-decoration: none; pointer-events: auto; }
+#nep-panel a:hover, #nep-card a:hover { text-decoration: underline; }
+.nep-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: #ffd27a;
+  font: 600 11px "Segoe UI", system-ui, sans-serif;
+  text-shadow: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  text-align: left;
+}
+.nep-link:hover { text-decoration: underline; }
+
+/* ---------- target card ---------- */
+
+#nep-card {
+  position: absolute;
+  left: 6px;
+  top: 80px;
+  width: min(236px, calc(100% - 12px));
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 8px 9px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 10px;
+  background: rgba(12, 16, 23, 0.95);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+  font-size: 11.5px;
+  line-height: 1.3;
+  z-index: 6;
+}
+#nep-card.right { left: auto; right: 6px; }
+#nep-card[hidden] { display: none; }
+.nep-head { display: flex; align-items: flex-start; gap: 7px; }
+.nep-badge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--c);
+}
+.nep-badge .nep-ico { width: 19px; height: 19px; color: #fff; }
+.nep-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; line-height: 1.2; }
+.nep-x { color: #ffd27a; }
+.nep-place { font-size: 11.5px; font-weight: 500; color: #cfd8e3; margin-top: 1px; }
+.nep-place b { color: #fff; }
+.nep-sub { font-size: 10.5px; font-weight: 400; color: #9aa7b8; }
+.nep-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 14px;
+  line-height: 20px;
+  padding: 0;
+  cursor: pointer;
+}
+.nep-close:hover { background: rgba(255, 255, 255, 0.18); }
+.nep-rows {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 8px;
+  margin-top: 6px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.nep-rows .k { color: #9aa7b8; font-size: 10.5px; padding-top: 1px; }
+.nep-rows .v { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.nep-rows small { font-weight: 400; color: #9aa7b8; }
+.nep-expl { margin-top: 5px; color: #dfe6ef; }
+.nep-note { margin-top: 3px; color: #ffcf8a; font-size: 10.5px; }
+.nep-foot { margin-top: 5px; color: #8794a6; font-size: 10px; }
+
+/* ---------- tooltip ---------- */
+
+#nep-tip {
+  position: absolute;
+  display: none;
+  max-width: 250px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: rgba(12, 16, 23, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  font-size: 12px;
+  z-index: 7;
+}
+#nep-tip b { font-size: 13px; }
+#nep-tip .sub { color: #9aa7b8; font-size: 11px; }
+#nep-tip ul { margin: 3px 0 2px; padding-left: 15px; }
+#nep-tip li { margin: 1px 0; }

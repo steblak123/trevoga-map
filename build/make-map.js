@@ -10,6 +10,8 @@ const Regions = require('../app/regions');
 
 const WIDTH = 1000; // output coordinate width
 const SIMPLIFY = '3%';
+// Lambert conformal conic; app/neptun/geo.js implements the same projection to place lat/lon points.
+const PROJ = { lat1: 45, lat2: 51, lat0: 48.5, lon0: 31.5 };
 
 const input = process.argv[2];
 if (!input) {
@@ -45,7 +47,7 @@ if (missing.length) throw new Error(`Raions without geometry: ${missing.join(', 
   const out = await mapshaper.applyCommands(
     [
       '-i raions.json name=raions',
-      '-proj +proj=lcc +lat_1=45 +lat_2=51 +lat_0=48.5 +lon_0=31.5 +datum=WGS84',
+      `-proj +proj=lcc +lat_1=${PROJ.lat1} +lat_2=${PROJ.lat2} +lat_0=${PROJ.lat0} +lon_0=${PROJ.lon0} +datum=WGS84`,
       '-dissolve uid copy-fields=oblast', // merge multi-part units (e.g. Chornobyl zone into Vyshhorod)
       `-simplify ${SIMPLIFY} keep-shapes`,
       '-clean',
@@ -100,6 +102,8 @@ if (missing.length) throw new Error(`Raions without geometry: ${missing.join(', 
     source: 'OCHA / HDX COD-AB Ukraine (CC BY-IGO), https://data.humdata.org/dataset/cod-ab-ukr',
     width: WIDTH,
     height: Math.ceil((y1 - y0) * k),
+    // Map units from projected metres: X = (x - x0) * k, Y = (y1 - y) * k.
+    proj: { ...PROJ, x0, y1, k },
     raions: raions
       .map((f) => ({ uid: f.properties.uid, name: nameOf(f.properties.uid), d: toPath(f.geometry) }))
       .sort((a, b) => a.uid - b.uid),

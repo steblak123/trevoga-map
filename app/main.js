@@ -4,6 +4,7 @@ const fs = require('fs');
 const Regions = require('./regions');
 const native = require('./native');
 const sysmon = require('./sysmon');
+require('./neptun/main'); // NEPTUN targets layer: opens its links in the browser
 
 const ROOT = path.join(__dirname, '..');
 const API = 'https://api.alerts.in.ua';

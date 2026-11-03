@@ -1,7 +1,7 @@
 # Карта тривог — віджет для робочого столу Windows
 
 Прозора карта повітряних тривог України, яка «живе» прямо на робочому столі.
-Дані — з публічного API [alerts.in.ua](https://alerts.in.ua).
+Тривоги — з публічного API [alerts.in.ua](https://alerts.in.ua), цілі (БпЛА, ракети, КАБ…) — з відкритого API [NEPTUN](https://neptun.in.ua/developers).
 
 ![Скриншот](docs/screenshot.png)
 
@@ -9,6 +9,7 @@
 
 - Карта областей і 136 районів з прозорим фоном: червоний / жовтий рівень тривоги.
 - Підказка при наведенні: з якого часу тривога, типи загроз (БпЛА, ракети, КАБи…), громади під тривогою.
+- **Цілі на карті** (NEPTUN): БпЛА, ракети, балістика, КАБ, авіація в реальному часі з курсом; панель цілей з лічильниками за типами й найближчою ціллю до ваших районів; картка цілі за кліком. Усе це — у папці [`app/neptun`](app/neptun/README.md).
 - **Мої райони**: оберіть райони чекбоксами — обвідка на карті, статус під картою і плашка **поверх усіх вікон** при тривозі та відбої (зі звуком за бажанням).
 - Два режими розміщення:
   - *над ярликами* — нижній шар, не ховається по Win+D, можна перетягувати й розтягувати;
@@ -44,7 +45,7 @@ npm run dist         # інсталятор dist/trevoga-map-setup-<version>.exe
 
 ### Карта
 
-`app/assets/map.json` згенеровано скриптом `build/make-map.js` з адміністративних меж [OCHA / HDX COD-AB Ukraine](https://data.humdata.org/dataset/cod-ab-ukr).
+`app/assets/map.json` (разом із параметрами проєкції для міток цілей) згенеровано скриптом `build/make-map.js` з адміністративних меж [OCHA / HDX COD-AB Ukraine](https://data.humdata.org/dataset/cod-ab-ukr).
 Відповідність районів ідентифікаторам API (`location_uid`) — у `build/raion-uids.json`.
 
 ```bash
@@ -53,6 +54,7 @@ node build/make-map.js path/to/ukr_admin2.geojson
 
 ## Як це працює
 
+- Цілі: WebSocket `wss://neptun.in.ua/api/v1/stream` (без токена), при обриві — `GET /api/v1/threats` не частіше ніж раз на 15 с. Див. [`app/neptun/README.md`](app/neptun/README.md).
 - Кожні 15 с — `/v1/iot/active_air_raid_alerts.json` (статус усіх областей і районів), кожні 30 с — `/v1/alerts/active.json` (деталі для підказок). Разом 6 запитів/хв при ліміті 8–10; використовується `If-Modified-Since`.
 - Electron: прозоре вікно без рамки; прив’язка до робочого столу через Win32 (`koffi`).
 
@@ -65,4 +67,5 @@ node build/make-map.js path/to/ukr_admin2.geojson
 
 - Код — [MIT](LICENSE).
 - Дані про тривоги — [alerts.in.ua](https://alerts.in.ua), за [умовами використання](https://alerts.in.ua/terms-of-usage) (атрибуція показана на віджеті).
+- Дані про цілі — [NEPTUN](https://neptun.in.ua/), за [умовами API](https://neptun.in.ua/api-terms) (посилання показане в панелі цілей і в картці).
 - Межі адміністративних одиниць — OCHA / HDX, State Scientific Production Enterprise "Kartographia", [CC BY-IGO](https://creativecommons.org/licenses/by/3.0/igo/).
