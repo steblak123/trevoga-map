@@ -12,7 +12,8 @@
     "start": "electron .",
     "icon": "electron build/make-icon.js",
     "dist": "node build/prepare-token.js && electron-builder --win nsis",
-    "release": "electron-builder --win nsis --x64 --publish always"
+    "release": "electron-builder --win nsis --x64 --publish always",
+    "release:local": "node -e \"require('fs').rmSync('app/embedded.json',{force:true})\" && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
     "electron-updater": "^6.8.11",

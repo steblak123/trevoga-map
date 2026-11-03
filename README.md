@@ -114,6 +114,11 @@ npm run dist         # інсталятор dist/trevoga-map-setup.exe (лока
 
 Що нового береться з розділу `## 1.2.0` у [`CHANGELOG.md`](CHANGELOG.md).
 
+**Без GitHub Actions** (наприклад, коли вони недоступні для акаунта) — зібрати на своєму Windows і викласти вручну:
+1. `npm run release:local` — збирає `dist\trevoga-map-setup.exe`, `.blockmap` і `latest.yml` (вбудований токен перед збіркою видаляється).
+2. GitHub → **Releases → Draft a new release**, тег `vX.Y.Z` (та сама версія, що в `package.json`), текст — з `CHANGELOG.md`,
+   прикріпити ці три файли → **Publish release**. Автооновлення читає `latest.yml` з останнього релізу.
+
 | Папка | Що там |
 | --- | --- |
 | `app/` | віджет, налаштування, плашки тривог, головний процес Electron |
