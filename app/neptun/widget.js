@@ -52,14 +52,14 @@
   const client = new window.NeptunClient();
   // Jet or plain Shahed from the channel posts (intel.js), cached per track update.
   const intel = window.NeptunIntel ? new window.NeptunIntel() : null;
-  const hintCache = new Map(); // track id -> { v, u, mode, at }
+  const hintCache = new Map(); // track id -> { v, u, mode, at, channel }
   window.NeptunTypes.setHint((t) => {
     if (!intel) return null;
     const c = hintCache.get(t.id);
     if (c && c.v === intel.version && c.u === t.updatedAt) return c.mode;
     if (hintCache.size > 3000) hintCache.clear();
     const a = intel.about(t);
-    hintCache.set(t.id, { v: intel.version, u: t.updatedAt, mode: a ? a.mode : null, at: a ? a.at : null });
+    hintCache.set(t.id, { v: intel.version, u: t.updatedAt, mode: a ? a.mode : null, at: a ? a.at : null, channel: a ? a.channel : '' });
     return a ? a.mode : null;
   });
 
@@ -959,7 +959,9 @@
       // What told the kind: a post about the place (and its time), NEPTUN's own words, the speed.
       const h = hintCache.get(t.id);
       const why =
-        by === 'post' && h && h.at ? `пост ${hhmm(h.at)}` : by === 'text' ? 'опис' : by === 'speed' ? `${speed} км/год` : by ? '' : 'ймовірно';
+        by === 'post' && h && h.at
+          ? `${h.channel ? esc(h.channel.length > 18 ? h.channel.slice(0, 17) + '…' : h.channel) : 'пост'} ${hhmm(h.at)}`
+          : by === 'text' ? 'опис' : by === 'speed' ? `${speed} км/год` : by ? '' : 'ймовірно';
       typeCell = `<span class="h-k">Тип</span><span class="h-v">${kind === 'jet' ? '<span class="h-b jet">Реактивний</span>' : '<span class="h-b plain">Звичайний</span>'}${why ? `<small>${why}</small>` : ''}</span>`;
     } else {
       typeCell = `<span class="h-k">Точність</span><span class="h-v">${t.uncertaintyKm > 0 ? `±${Math.round(t.uncertaintyKm)}<small>км</small>` : '—'}</span>`;
@@ -979,8 +981,22 @@
       `<span class="h-k">Джерела</span><span class="h-v">${n || '—'}${conf ? `<small>${conf}</small>` : ''}</span>` +
       `<span class="h-k">Ризик</span><span class="h-v"><span class="h-risk l${risk}"><span class="seg"><i></i><i></i><i></i></span>${RISK[risk]}</span></span>` +
       `</div>` +
-      (note ? `<div class="h-foot"><span class="h-b note">${esc(note)}</span></div>` : '')
+      detailsFoot(t, note)
     );
+  }
+
+  // Under the card: the note and the channels that wrote about the target (a click opens the channel).
+  function detailsFoot(t, note) {
+    const chips = sourcesOf(t).map((x) => {
+      const url = channelUrl(x.channel);
+      const body = `${esc(x.channel)}<small>${hhmm(x.at)}</small>`;
+      const title = esc(x.text);
+      return url
+        ? `<a class="h-b src ui" href="${url}" target="_blank" title="${title}">${body}</a>`
+        : `<span class="h-b src" title="${title}">${body}</span>`;
+    });
+    if (!note && !chips.length) return '';
+    return `<div class="h-foot">${note ? `<span class="h-b note">${esc(note)}</span>` : ''}${chips.join('')}</div>`;
   }
 
   function groupPanelHtml(list, now) {
@@ -1175,6 +1191,22 @@
     tip.style.display = 'none';
   }
 
+  // Where the information about a target comes from: the channels that wrote about its place lately
+  // (intel.js: name, time, the line) and how many sources NEPTUN counted.
+  const CONFIRM_WORD = ['підтвердження', 'підтвердження', 'підтверджень'];
+  const sourcesOf = (t) => (intel ? intel.sources(t, kindOf(t), 3) : []);
+  const channelUrl = (c) => (/^@[A-Za-z0-9_]{4,32}$/.test(c) ? `https://t.me/${c.slice(1)}` : null);
+
+  function sourcesTip(t) {
+    const n = t.sourceCount || 0;
+    const list = sourcesOf(t);
+    const head = `<div class="tt-k">Джерела${n ? `<small>${n} ${plural(n, CONFIRM_WORD)}</small>` : ''}</div>`;
+    const rows = list.length
+      ? list.map((x) => `<div class="tt-sr"><b>${esc(x.channel)}</b><i>${hhmm(x.at)}</i><span>${esc(x.text)}</span></div>`).join('')
+      : '<div class="tt-sr"><b>NEPTUN</b><span>зведення моніторингових каналів</span></div>';
+    return `<div class="tt-src">${head}${rows}</div>`;
+  }
+
   function targetTip(t, now, edge) {
     const near = nearOf(t, now);
     const p = placeOf(t, now);
@@ -1184,7 +1216,8 @@
       `<div class="tt-p">${placeHtml(t)}${region ? `<span>${region}</span>` : ''}</div>` +
       `<div class="tt-b">${statusBadge(statusKey(near))}${distBadge(near)}${courseBadge(p)}${etaBadge(etaMin(t, near))}</div>` +
       (near && near.km >= 0.5 ? `<div class="tt-s">до ${esc(shortName(near.name))}</div>` : '') +
-      (edge ? '<div class="tt-s">за межами карти</div>' : '')
+      (edge ? '<div class="tt-s">за межами карти</div>' : '') +
+      sourcesTip(t)
     );
   }
 

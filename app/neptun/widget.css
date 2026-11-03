@@ -282,6 +282,17 @@ body.nep-hud #status { display: none; } /* the region card replaces the status l
 #nep-tip li + li { border-top: 1px dashed var(--h-line); }
 #nep-tip li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 #nep-tip li span small { display: block; font-weight: 400; font-size: 10px; color: var(--h-steel); overflow: hidden; text-overflow: ellipsis; }
+/* Sources of a target: channel, time, the line it wrote. */
+#nep-tip .tt-src { margin-top: 5px; padding-top: 4px; border-top: 1px dashed var(--h-line); }
+#nep-tip .tt-k { font: 600 9.5px var(--h-txt); letter-spacing: 0.6px; text-transform: uppercase; color: var(--h-steel); }
+#nep-tip .tt-k small { margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+#nep-tip .tt-sr { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: baseline; gap: 0 5px; margin-top: 2px; }
+#nep-tip .tt-sr b { font-weight: 600; color: var(--h-cyan); white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+#nep-tip .tt-sr i { font-style: normal; color: var(--h-steel); font-size: 10px; font-variant-numeric: tabular-nums; }
+#nep-tip .tt-sr span { grid-column: 1 / -1; color: #c9d4e2; font-size: 10.5px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.h-b.src { --bc: var(--h-cyan); text-decoration: none; color: var(--h-ink); max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-b.src small { margin-left: 4px; color: var(--h-steel); }
+a.h-b.src:hover { color: #fff; border-color: var(--h-cyan); }
 
 @media (prefers-reduced-motion: reduce) {
   .nep-tile, .nep-region, .nep-targets, #sys > .tile { transition: none; }
@@ -401,3 +412,5 @@ body.nep-base-sat #nep-base-map .nb-rail { stroke: rgba(235, 240, 248, 0.55); }
 #nep-base-names circle { fill: #e8edf3; stroke: rgba(6, 10, 16, 0.9); stroke-width: 1px; vector-effect: non-scaling-stroke; }
 #nep-base-names .r0 circle { fill: #ffd36e; }
 body.no-labels #nep-base-names { display: none; }
+.nep-targets .h-foot { overflow: hidden; }
+.nep-targets .h-foot > * { flex: none; }
