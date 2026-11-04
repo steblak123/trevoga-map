@@ -559,3 +559,11 @@ body.nep-calm .nep-targets .h-title { color: var(--calm-ink) !important; }
 .nep-home:hover .rad { opacity: 1; }
 body.nep-placing #map, body.nep-placing .nep-marker { cursor: crosshair; }
 #nep-zoom button.on { background: #1f4f6b; color: #fff; border-color: #4fc3f7; }
+
+/* mentions under the target card: channel, time, the line it wrote */
+.h-foot.men { flex-direction: column; gap: 3px; }
+.h-men { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.h-men > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c9d4e2; font: 400 11px var(--h-txt); }
+.nep-targets .h-foot.men > * { flex: none; }
+.nep-targets .h-foot.men > .h-men { flex: 0 1 auto; }
+.nep-targets .h-foot.men > .h-b.note { align-self: flex-start; }

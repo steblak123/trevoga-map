@@ -1035,7 +1035,7 @@
     if (st === 'live') text = client.updatedAt ? hhmmss(client.updatedAt) : '';
     else if (st === 'connecting') text = 'підключення';
     else text = client.updatedAt ? hhmm(client.updatedAt) : 'немає зв’язку';
-    return `<span class="h-live"><i class="${st}"></i>${esc(text)}</span>`;
+    return `<span class="h-live"><i class="${st}"></i>${st === 'live' || client.updatedAt ? 'станом на ' : ''}${esc(text)}</span>`;
   }
 
   const countChip = (n, word) => `<span class="h-count"${n ? '' : ' style="--h-cc:var(--h-dim)"'}>${n} ${plural(n, word)}</span>`;
@@ -1108,7 +1108,7 @@
     return (
       `<div class="h-head">${typeChip(kind)}<span class="h-title" style="color:color-mix(in srgb, ${metaOf(t).color} 45%, #fff)">${nameOf(t)}</span>${maybeJet(t)}${statusBadge(statusKey(near))}<button class="h-x ui nep-close" title="Закрити">×</button></div>` +
       `<div class="h-kv two">` +
-      `<span class="h-k">Місце</span><span class="h-v">${placeBadge(placeShort(t))}</span>` +
+      `<span class="h-k">Місце</span><span class="h-v">${placeBadge(placeShort(t))}${note ? `<small>${esc(note)}</small>` : ''}</span>` +
       `<span class="h-k">Відстань</span><span class="h-v">${distBadge(near)}</span>` +
       `<span class="h-k">Звідки</span><span class="h-v">${from}</span>` +
       `<span class="h-k">Курс</span><span class="h-v">${course}</span>` +
@@ -1119,22 +1119,23 @@
       `<span class="h-k">Джерела</span><span class="h-v">${n || '—'}${conf ? `<small>${conf}</small>` : ''}</span>` +
       `<span class="h-k">Ризик</span><span class="h-v"><span class="h-risk l${risk}"><span class="seg"><i></i><i></i><i></i></span>${RISK[risk]}</span></span>` +
       `</div>` +
-      detailsFoot(t, note)
+      detailsFoot(t)
     );
   }
 
   // Under the card: the note and the channels that wrote about the target (a click opens the channel).
-  function detailsFoot(t, note) {
-    const chips = sourcesOf(t).map((x) => {
+  // Where and how it was mentioned: one line per channel — the channel (a button into Telegram), the time and
+  // the very line it wrote; without any post, the NEPTUN summary.
+  function detailsFoot(t) {
+    const rows = sourcesOf(t).map((x) => {
       const url = channelUrl(x.channel);
-      const body = `${esc(x.channel)}<small>${hhmm(x.at)}</small>`;
-      const title = esc(x.text);
-      return url
-        ? `<a class="h-b src ui" href="${url}" target="_blank" title="${title}">${body}</a>`
-        : `<span class="h-b src" title="${title}">${body}</span>`;
+      const chan = url
+        ? `<a class="h-b src ui" href="${url}" target="_blank">${esc(x.channel)}<small>${hhmm(x.at)}</small></a>`
+        : `<span class="h-b src">${esc(x.channel)}<small>${hhmm(x.at)}</small></span>`;
+      return `<div class="h-men">${chan}<span title="${esc(x.text)}">«${esc(x.text)}»</span></div>`;
     });
-    if (!note && !chips.length) return '';
-    return `<div class="h-foot">${note ? `<span class="h-b note">${esc(note)}</span>` : ''}${chips.join('')}</div>`;
+    if (!rows.length) rows.push(`<div class="h-men"><span class="h-b src">NEPTUN</span><span>зведення моніторингових каналів${t.locality ? ` · ${esc(t.locality)}` : ''}</span></div>`);
+    return `<div class="h-foot men">${rows.slice(0, 2).join('')}</div>`;
   }
 
   function groupPanelHtml(list, now) {
