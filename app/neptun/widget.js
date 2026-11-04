@@ -559,9 +559,12 @@
     const p = placeOf(t, now);
     const risk = near ? targetRisk(t, near) : null;
     const cls = `h-ent ui${compact ? ' compact' : ''}${risk == null ? '' : ' r' + risk}${fresh ? ' fresh' : ''}${t.id === selected ? ' sel' : ''}`;
+    // When it was seen: "станом на 22:23" (the time of the last report, not of the drawing).
+    const seen = lastSeen(t);
+    const when = seen ? `<span class="h-b when" title="станом на ${hhmm(seen)} · ${ago(seen, now)}${now - seen < 60000 ? '' : ' тому'}">${ico('clock')}${hhmm(seen)}</span>` : '';
     const badges = compact
-      ? distBadge(near)
-      : placeBadge(placeShort(t)) + distBadge(near) + courseBadge(p, originOf(t, now)) + etaBadge(etaMin(t, near));
+      ? distBadge(near) + when
+      : placeBadge(placeShort(t)) + distBadge(near) + when + courseBadge(p, originOf(t, now)) + etaBadge(etaMin(t, near));
     return (
       `<button class="${cls}" data-id="${esc(t.id)}" style="--c:${metaOf(t).color}">${typeChip(kindOf(t))}` +
       `<span class="h-ent-name">${nameOf(t)}<small>${esc(areaText(t))}</small></span>${statusBadge(statusKey(near))}<span class="h-ent-badges">${badges}</span></button>`
@@ -1395,11 +1398,17 @@
         `<div class="nep-tn">${value}${sub ? `<span class="nep-ts">${sub}</span>` : ''}</div>` +
         `<svg class="nep-spark" viewBox="0 0 60 30" preserveAspectRatio="none">${sparkPaths(values)}</svg>`,
     );
-    tilesEl.appendChild(el); // calls come in display order
+    // Calls come in display order. A tile already in its place is not moved: moving it re-inserts it in the
+    // page, and its icon and glow blinked every 2 s.
+    const at = tilesEl.children[tileSlot];
+    if (at !== el) tilesEl.insertBefore(el, at || null);
+    tileSlot++;
   }
+  let tileSlot = 0;
 
   function renderTiles(now) {
     const used = new Set();
+    tileSlot = 0;
     tilesEl.hidden = !opts.panel;
     if (opts.panel) {
       const c = counts(now);

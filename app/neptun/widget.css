@@ -579,7 +579,16 @@ body.nep-placing #map, body.nep-placing .nep-marker { cursor: crosshair; }
 /* mentions under the target card: channel, time, the line it wrote */
 .h-foot.men { flex-direction: column; gap: 3px; }
 .h-men { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.h-men > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c9d4e2; font: 400 11px var(--h-txt); }
+.h-men { align-items: flex-start; }
+.h-men > .h-b { flex: none; }
+/* the line the channel wrote: up to two lines, the whole of it on hover */
+.h-men > span:last-child { min-width: 0; overflow: hidden; color: #c9d4e2; font: 400 11px/1.25 var(--h-txt); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; padding-top: 2px; }
+/* the card scrolls if two long mentions do not fit */
+.nep-targets { overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(159, 179, 200, 0.35) transparent; }
+.nep-targets::-webkit-scrollbar { width: 4px; }
+.nep-targets::-webkit-scrollbar-thumb { background: rgba(159, 179, 200, 0.35); border-radius: 2px; }
+.h-b.when { --bc: #9fb3c8; color: #c9d4e2; }
+.h-b.when .h-ico { color: #9fb3c8; }
 .nep-targets .h-foot.men > * { flex: none; }
 .nep-targets .h-foot.men > .h-men { flex: 0 1 auto; }
 .nep-targets .h-foot.men > .h-b.note { align-self: flex-start; }
