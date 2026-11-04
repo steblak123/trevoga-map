@@ -1106,7 +1106,7 @@
     }
     targetsEl.dataset.near = risk ? '1' : '0';
     return (
-      `<div class="h-head">${typeChip(kind)}<span class="h-title" style="color:color-mix(in srgb, ${metaOf(t).color} 45%, #fff)">${nameOf(t)}</span>${statusBadge(statusKey(near))}<button class="h-x ui nep-close" title="Закрити">×</button></div>` +
+      `<div class="h-head">${typeChip(kind)}<span class="h-title" style="color:color-mix(in srgb, ${metaOf(t).color} 45%, #fff)">${nameOf(t)}</span>${maybeJet(t)}${statusBadge(statusKey(near))}<button class="h-x ui nep-close" title="Закрити">×</button></div>` +
       `<div class="h-kv two">` +
       `<span class="h-k">Місце</span><span class="h-v">${placeBadge(placeShort(t))}</span>` +
       `<span class="h-k">Відстань</span><span class="h-v">${distBadge(near)}</span>` +
@@ -1345,12 +1345,15 @@
     return `<div class="tt-src">${head}${rows}</div>`;
   }
 
+  // One channel calls it jet, but neither the Air Force nor a second channel does: counted as an ordinary Shahed.
+  const maybeJet = (t) => (classify(t).by === 'maybe' ? '<span class="h-b note">можливо реактивний</span>' : '');
+
   function targetTip(t, now, edge) {
     const near = nearOf(t, now);
     const p = placeOf(t, now);
     const region = regionLine(t);
     return (
-      `<div class="tt-h" style="--c:${metaOf(t).color}">${typeChip(kindOf(t))}<b>${nameOf(t)}</b></div>` +
+      `<div class="tt-h" style="--c:${metaOf(t).color}">${typeChip(kindOf(t))}<b>${nameOf(t)}</b>${maybeJet(t)}</div>` +
       `<div class="tt-p">${placeHtml(t)}${region ? `<span>${region}</span>` : ''}</div>` +
       `<div class="tt-b">${statusBadge(statusKey(near))}${distBadge(near)}${courseBadge(p)}${etaBadge(etaMin(t, near))}</div>` +
       (near && near.km >= 0.5 ? `<div class="tt-s">до ${esc(shortName(near.name))}</div>` : '') +
