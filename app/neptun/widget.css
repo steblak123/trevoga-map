@@ -100,7 +100,7 @@
 #nep-leads .lead { stroke: rgba(255, 255, 255, 0.75); stroke-width: 1px; vector-effect: non-scaling-stroke; }
 #nep-leads .spot { fill: #fff; stroke: #0b0f15; stroke-width: 1px; vector-effect: non-scaling-stroke; }
 #nep-layer, #nep-sel, #nep-tracks, #nep-area, #nep-leads { pointer-events: none; }
-#nep-markers, #nep-booms { pointer-events: auto; }
+#nep-markers, #nep-booms, #nep-home { pointer-events: auto; }
 
 /* oblast named in a report without a point */
 #nep-area .nep-area {
@@ -551,3 +551,11 @@ body.nep-calm #nep-ticker .tk-it b { color: var(--calm-ink); }
 body.nep-calm #nep-tip { border-left-color: rgba(255, 255, 255, 0.18) !important; }
 body.nep-calm #nep-tip .tt-sr b { color: #a9c7e2; }
 body.nep-calm .nep-targets .h-title { color: var(--calm-ink) !important; }
+
+/* your own point: quiet, the radius only on hover */
+.nep-home .dot { fill: rgba(127, 220, 255, 0.85); stroke: rgba(6, 10, 16, 0.85); }
+.nep-home .hit { fill: transparent; }
+.nep-home .rad { fill: rgba(127, 220, 255, 0.05); stroke: rgba(127, 220, 255, 0.55); stroke-width: 1.2px; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+.nep-home:hover .rad { opacity: 1; }
+body.nep-placing #map, body.nep-placing .nep-marker { cursor: crosshair; }
+#nep-zoom button.on { background: #1f4f6b; color: #fff; border-color: #4fc3f7; }

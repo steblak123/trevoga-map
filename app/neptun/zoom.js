@@ -113,7 +113,8 @@
     '<button class="ui" data-z="in" title="Наблизити">+</button>' +
     '<button class="ui" data-z="out" title="Віддалити">−</button>' +
     '<button class="ui mine" data-z="mine" title="Мої райони">◎</button>' +
-    '<button class="ui" data-z="all" title="Уся карта">⤢</button>';
+    '<button class="ui" data-z="all" title="Уся карта">⤢</button>' +
+    '<button class="ui" data-z="home" title="Поставити свою точку: клік по карті (Esc — скасувати)">⌖</button>';
   document.getElementById('wrap').appendChild(bar);
   for (const ev of ['mousedown', 'dblclick']) bar.addEventListener(ev, (e) => e.stopPropagation());
   bar.addEventListener('click', (e) => {
@@ -122,6 +123,7 @@
     if (b.dataset.z === 'in') api.zoomBy(STEP);
     else if (b.dataset.z === 'out') api.zoomBy(1 / STEP);
     else if (b.dataset.z === 'all') api.reset();
+    else if (b.dataset.z === 'home') svg.dispatchEvent(new CustomEvent('nep-place-home'));
     else svg.dispatchEvent(new CustomEvent('nep-zoom-mine'));
   });
 

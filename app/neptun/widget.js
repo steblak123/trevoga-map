@@ -12,7 +12,7 @@
   const ipc = bridge.neptun || null; // preload.js hook; without it there is no banner
   // Projection of app/assets/map.json (see build/make-map.js), for a map.json without "proj".
   const DEFAULT_PROJ = { lat1: 45, lat2: 51, lat0: 48.5, lon0: 31.5, x0: -690178, y1: 432316, k: 0.000755630581276381 };
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright' };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright', home: null };
   const BADGE_PX = 9; // marker radius on screen
   const CLUSTER_PX = 15; // markers closer than this on screen become one "×N" marker
   const EDGE_PAD_PX = 13; // targets beyond the visible map are pinned this far inside its edge
@@ -66,11 +66,16 @@
   let opts = { ...DEFAULTS, markers: false }; // applySettings() starts the client if enabled
   let volume = 0.7;
   let project = null; // (lat, lon) -> [x, y] in map units
+  let projDef = null; // the projection parameters
   let kmPerUnit = 1;
   const shapeIndex = new Map(); // raion / city uid -> { uid, name, d, rings? }
   const oblastIndex = new Map(); // normalized oblast name -> { uid, name, d }
   let land = []; // [{ x0, y0, x1, y1, rings }] of every raion: is a point over Ukraine
   let mine = []; // shapes of the selected ("my") regions
+  // Your own point ({ lat, lon, x, y }), when set: distances, the radius and "Біля вас" count from it, not from the raions.
+  let home = null;
+  const homeShape = { name: 'вашої точки', center: [0, 0] };
+  const hasBase = () => mine.length > 0 || !!home;
   let alertState = {}; // air-raid state from main.js (iot, alerts, history, starts, error)
   let selected = null; // id of the target in the targets panel
   let group = null; // ids of the "×N" group in the targets panel
@@ -92,8 +97,9 @@
   const selLayer = svgEl('g', { id: 'nep-sel' });
   const leadLayer = svgEl('g', { id: 'nep-leads' }); // lines from fanned-out markers to their true spot
   const boomLayer = svgEl('g', { id: 'nep-booms' }); // explosions named in the channel posts
+  const homeLayer = svgEl('g', { id: 'nep-home' }); // your own point
   const markerLayer = svgEl('g', { id: 'nep-markers' });
-  layer.append(areaLayer, trackLayer, selLayer, leadLayer, boomLayer, markerLayer);
+  layer.append(areaLayer, trackLayer, selLayer, leadLayer, boomLayer, homeLayer, markerLayer);
   svg.appendChild(layer);
 
   // Under the map, above the PC load tiles: the dock (region card + targets panel) and the count tiles.
@@ -128,7 +134,7 @@
   $('wrap').appendChild(credit);
 
   // Clicks on our elements must not drag the widget or open the settings (widget.js listens on document).
-  for (const el of [tickerEl, dock, tilesEl, markerLayer, boomLayer, credit]) {
+  for (const el of [tickerEl, dock, tilesEl, markerLayer, boomLayer, homeLayer, credit]) {
     el.addEventListener('mousedown', (e) => e.stopPropagation());
     el.addEventListener('dblclick', (e) => e.stopPropagation());
   }
@@ -329,6 +335,10 @@
 
   // Nearest selected region to a map point: { km, name, shape } (km = 0 inside it).
   function nearestAt(x, y) {
+    if (home) {
+      homeShape.center = [home.x, home.y];
+      return { km: Math.hypot(x - home.x, y - home.y) * kmPerUnit, name: homeShape.name, shape: homeShape };
+    }
     let best = null;
     for (const s of mine) {
       const r = rings(s);
@@ -340,7 +350,7 @@
 
   // Distance to the selected regions and whether the target is closing in. Not for area-only reports.
   function nearOf(t, now) {
-    if (!mine.length || t.areaOnly || !project) return null;
+    if (!hasBase() || t.areaOnly || !project) return null;
     if (nearCache.has(t.id)) return nearCache.get(t.id);
     const p = placeOf(t, now);
     const near = nearestAt(p.x, p.y);
@@ -583,7 +593,68 @@
     drawTracks(now);
     drawSelection(now);
     drawBooms(now);
+    drawHome();
   }
+
+  // ---------- your point ----------
+
+  const xy = (lat, lon) => {
+    const [x, y] = project(lat, lon);
+    return { x, y };
+  };
+
+  // A small quiet dot; the dashed circle of the radius shows only while you point at it.
+  function drawHome() {
+    homeLayer.textContent = '';
+    if (!home || !opts.markers || !unitsPerPx) return;
+    const u = unitsPerPx;
+    const g = svgEl('g', { class: 'nep-home ui', transform: `translate(${home.x.toFixed(3)} ${home.y.toFixed(3)})` });
+    g.append(
+      svgEl('circle', { class: 'rad', r: ((opts.alertKm / kmPerUnit)).toFixed(3) }),
+      svgEl('circle', { class: 'hit', r: (9 * u).toFixed(3) }),
+      svgEl('circle', { class: 'dot', r: (3 * u).toFixed(3), 'stroke-width': (1.2 * u).toFixed(3) }),
+    );
+    homeLayer.appendChild(g);
+  }
+
+  // Placing: the ⌖ button, then a click on the map. Esc or the button again cancels.
+  let placing = false;
+  function setPlacing(on) {
+    placing = on;
+    document.body.classList.toggle('nep-placing', on);
+    const b = document.querySelector('#nep-zoom [data-z="home"]');
+    if (b) b.classList.toggle('on', on);
+  }
+  function saveHome(h) {
+    bridge.setSettings({ neptun: { ...opts, home: h } });
+  }
+  svg.addEventListener(
+    'mousedown',
+    (e) => {
+      if (placing && e.button === 0) e.stopPropagation(); // not a window drag
+    },
+    true,
+  );
+  svg.addEventListener(
+    'click',
+    (e) => {
+      if (!placing) return;
+      e.stopPropagation();
+      const m = svg.getScreenCTM();
+      const un = window.Geo.mapUnprojector && window.Geo.mapUnprojector(projDef);
+      setPlacing(false);
+      if (!m || !un) return;
+      const [lat, lon] = un((e.clientX - m.e) / m.a, (e.clientY - m.f) / m.d);
+      saveHome({ lat: +lat.toFixed(5), lon: +lon.toFixed(5) });
+    },
+    true,
+  );
+  addEventListener('keydown', (e) => e.key === 'Escape' && placing && setPlacing(false));
+  svg.addEventListener('nep-place-home', () => setPlacing(!placing));
+  document.addEventListener('mousemove', (ev) => {
+    const h = ev.target.closest && ev.target.closest('.nep-home');
+    if (h) showTip(`<div class="tt-h"><b>Ваша точка</b></div><div class="tt-s">радіус ${opts.alertKm} км · змінити: ⌖</div>`, ev);
+  });
 
   // ---------- explosions ----------
 
@@ -839,7 +910,7 @@
   // Updates the set of close targets; returns the ones that just came close.
   function trackNear(now) {
     const entered = [];
-    if (!opts.markers || !mine.length) {
+    if (!opts.markers || !hasBase()) {
       inside.clear();
       return entered;
     }
@@ -983,7 +1054,7 @@
     const close = closeTargets(now).map((x) => x.t);
     targetsEl.dataset.near = close.length ? '1' : '0';
     const head = `<div class="h-head">${ico('radar')}<span class="h-title">Поблизу ваших районів</span>${countChip(close.length, TARGET_WORD)}${liveHtml()}</div>`;
-    if (!mine.length) return head + `<div class="h-empty">Райони не обрано</div>`;
+    if (!hasBase()) return head + `<div class="h-empty">Райони не обрано</div>`;
     if (close.length >= FULL_ROWS) return head + listHtml(close, now);
     // Room left: the next nearest targets beyond the radius, under a quiet divider.
     const ids = new Set(close.map((t) => t.id));
@@ -1090,7 +1161,7 @@
 
   function counts(now) {
     const points = pointTargets();
-    const out = { total: sumSize(points) + targets().filter((t) => t.areaOnly).length, near: mine.length ? closeTargets(now).length : 0 };
+    const out = { total: sumSize(points) + targets().filter((t) => t.areaOnly).length, near: hasBase() ? closeTargets(now).length : 0 };
     for (const kind of ORDER) out['k:' + kind] = sumSize(points.filter((t) => kindOf(t) === kind));
     return out;
   }
@@ -1143,7 +1214,7 @@
       const c = counts(now);
       const points = pointTargets();
       const noCourse = points.filter((t) => courseless(t, now)).length; // like "ще N без курсу" on the NEPTUN map
-      const close = mine.length ? closeTargets(now) : [];
+      const close = hasBase() ? closeTargets(now) : [];
       putTile('total', { color: '#9fb3c8', icon: ico('radar'), label: 'Усього', value: c.total, sub: noCourse ? `${noCourse} без курсу` : '', values: series('total', c.total), data: { all: '1' } });
       used.add('total');
       for (const kind of ORDER) {
@@ -1162,7 +1233,7 @@
         });
         used.add(key);
       }
-      if (mine.length) {
+      if (hasBase()) {
         putTile('near', {
           color: '#ff9f43',
           icon: ico('pin'),
@@ -1430,7 +1501,8 @@
 
   svg.addEventListener('nep-zoom', () => opts.markers && refresh());
   svg.addEventListener('nep-zoom-mine', () => {
-    if (!mine.length || !window.NeptunZoom) return;
+    if (!hasBase() || !window.NeptunZoom) return;
+    if (home && !mine.length) return window.NeptunZoom.centerOn(home.x, home.y, 12);
     let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
     for (const s of mine) {
       for (const r of rings(s)) {
@@ -1485,8 +1557,10 @@
     document.body.classList.toggle('nep-calm', opts.style === 'calm'); // "Акуратний" look under the map
     if (s && Number.isFinite(s.volume)) volume = s.volume;
     mine = ((s && s.regions) || []).map((uid) => shapeIndex.get(Number(uid))).filter(Boolean);
+    const h = opts.home;
+    home = h && Number.isFinite(h.lat) && Number.isFinite(h.lon) && project ? { lat: h.lat, lon: h.lon, ...xy(h.lat, h.lon) } : null;
     const zoomBar = $('nep-zoom');
-    if (zoomBar) zoomBar.classList.toggle('has-mine', mine.length > 0);
+    if (zoomBar) zoomBar.classList.toggle('has-mine', hasBase());
     quiet = prev.markers; // a settings change re-baselines the close targets without a banner
     if (opts.markers && !prev.markers) {
       client.start();
@@ -1513,6 +1587,7 @@
     const map = await bridge.getMapData();
     const proj = map.proj || DEFAULT_PROJ;
     project = Geo.mapProjector(proj);
+    projDef = proj;
     kmPerUnit = 1 / (proj.k * 1000);
     for (const r of map.raions) shapeIndex.set(r.uid, { uid: r.uid, name: r.name, d: r.d });
     for (const o of map.oblasts) oblastIndex.set(normOblast(o.name), o);

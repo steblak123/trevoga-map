@@ -3,7 +3,7 @@
 // Options are kept in settings.json under
 //   "neptun": { markers, panel, hideFpv, alert, alertKm, alertSound, cardSide, basemap }.
 (function () {
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', basemap: 'none', booms: true, ticker: true, style: 'bright' };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', basemap: 'none', booms: true, ticker: true, style: 'bright', home: null };
   const STYLES = [
     ['bright', 'Яскравий', 'кольори, підсвітка'],
     ['calm', 'Акуратний', 'спокійно, без підсвітки'],
@@ -71,6 +71,13 @@
         <select id="nep-alertKm">${RADII.map((km) => `<option value="${km}">${km} км</option>`).join('')}</select>
         до ваших районів</label>
       <div class="inline" style="padding:2px 0 2px 24px">
+        <span class="hint">Моя точка</span>
+        <input type="text" id="nep-home" placeholder="50.4501, 30.5234" style="max-width:190px" spellcheck="false">
+        <button id="nep-homeClear" type="button">Зняти</button>
+      </div>
+      <div class="hint" style="padding-left:24px">Відстань і радіус рахуються від неї замість меж районів. Координати — з Google Карт
+        (клік правою кнопкою → числа), або кнопка ⌖ на карті віджета.</div>
+      <div class="inline" style="padding:2px 0 2px 24px">
         <label class="row"><input type="checkbox" id="nep-alertSound"> Звук сповіщення</label>
         <button id="nep-test" type="button">Перевірити</button>
       </div>
@@ -95,7 +102,7 @@
 
   function sync() {
     q('more').style.opacity = current.markers ? '' : '0.45';
-    for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test']) q(id).disabled = !current.markers;
+    for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test', 'home', 'homeClear']) q(id).disabled = !current.markers;
     for (const r of sides) r.disabled = !current.markers;
     km.disabled = q('alertSound').disabled = q('test').disabled = !current.markers || !current.alert;
   }
@@ -108,6 +115,7 @@
     for (const r of sides) r.checked = r.value === current.cardSide;
     for (const r of basemaps) r.checked = r.value === current.basemap;
     for (const r of styles) r.checked = r.value === current.style;
+    if (document.activeElement !== q('home')) q('home').value = current.home ? `${current.home.lat}, ${current.home.lon}` : '';
     sync();
   }
 
@@ -119,6 +127,23 @@
 
   for (const id of checks) q(id).addEventListener('change', (e) => save({ [id]: e.target.checked }));
   km.addEventListener('change', () => save({ alertKm: Number(km.value) }));
+  const homeIn = q('home');
+  function parseHome(v) {
+    const m = String(v).match(/(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)/);
+    if (!m) return null;
+    const lat = Number(m[1].replace(',', '.'));
+    const lon = Number(m[2].replace(',', '.'));
+    return lat > 43 && lat < 54 && lon > 21 && lon < 41 ? { lat, lon } : null; // Ukraine and its surroundings
+  }
+  homeIn.addEventListener('change', () => {
+    const h = parseHome(homeIn.value);
+    homeIn.style.outline = h || !homeIn.value.trim() ? '' : '2px solid #ff4d57';
+    if (h || !homeIn.value.trim()) save({ home: h });
+  });
+  q('homeClear').addEventListener('click', () => {
+    homeIn.value = '';
+    save({ home: null });
+  });
   for (const r of sides) r.addEventListener('change', () => save({ cardSide: r.value }));
   for (const r of basemaps) r.addEventListener('change', () => save({ basemap: r.value }));
   for (const r of styles) r.addEventListener('change', () => save({ style: r.value }));
