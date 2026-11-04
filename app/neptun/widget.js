@@ -1582,6 +1582,7 @@
   if (intel) intel.onUpdate(() => opts.markers && renderAll()); // new posts can change jet / plain
   // Your own Telegram channels: main.js reads them and sends the posts back.
   if (ipc && intel) ipc.on('tg-posts', (posts) => intel.addExternal(posts));
+  window.NeptunDebug = { intel, client }; // for checking from DevTools: NeptunDebug.intel.posts
 
   client.subscribe((kind) => {
     if (kind === 'data') {
