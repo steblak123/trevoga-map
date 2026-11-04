@@ -3,7 +3,7 @@
 // Options are kept in settings.json under
 //   "neptun": { markers, panel, hideFpv, alert, alertKm, alertSound, cardSide, basemap }.
 (function () {
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', basemap: 'none', booms: true, ticker: true, style: 'bright', home: null, channels: [] };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', basemap: 'none', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [] };
   const STYLES = [
     ['bright', 'Яскравий', 'кольори, підсвітка'],
     ['calm', 'Акуратний', 'спокійно, без підсвітки'],
@@ -82,6 +82,7 @@
         <input type="text" id="nep-home" placeholder="50.4501, 30.5234" style="max-width:190px" spellcheck="false">
         <button id="nep-homeClear" type="button">Зняти</button>
       </div>
+      <label class="row" style="padding-left:24px"><input type="checkbox" id="nep-homeRing"> Коло радіуса навколо точки</label>
       <div class="hint" style="padding-left:24px">Відстань і радіус рахуються від неї замість меж районів. Координати — з Google Карт
         (клік правою кнопкою → числа), або кнопка ⌖ на карті віджета.</div>
       <div class="inline" style="padding:2px 0 2px 24px">
@@ -108,7 +109,7 @@
   const styles = [...mapSection.querySelectorAll('input[name=nep-style]')];
 
   const q = (id) => section.querySelector('#nep-' + id);
-  const checks = ['markers', 'panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound'];
+  const checks = ['markers', 'panel', 'hideFpv', 'booms', 'ticker', 'homeRing', 'alert', 'alertSound'];
   const km = q('alertKm');
   const sides = [...section.querySelectorAll('input[name=nep-side]')];
   km.style.cssText = 'background:#0d1219;color:inherit;border:1px solid #273142;border-radius:6px;padding:2px 4px;font:inherit';
@@ -117,7 +118,7 @@
 
   function sync() {
     q('more').style.opacity = current.markers ? '' : '0.45';
-    for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test', 'home', 'homeClear', 'channels', 'chAdd']) q(id).disabled = !current.markers;
+    for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test', 'home', 'homeClear', 'homeRing', 'channels', 'chAdd']) q(id).disabled = !current.markers;
     for (const r of sides) r.disabled = !current.markers;
     km.disabled = q('alertSound').disabled = q('test').disabled = !current.markers || !current.alert;
   }

@@ -12,7 +12,7 @@
   const ipc = bridge.neptun || null; // preload.js hook; without it there is no banner
   // Projection of app/assets/map.json (see build/make-map.js), for a map.json without "proj".
   const DEFAULT_PROJ = { lat1: 45, lat2: 51, lat0: 48.5, lon0: 31.5, x0: -690178, y1: 432316, k: 0.000755630581276381 };
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright', home: null, channels: [] };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [] };
   const BADGE_PX = 9; // marker radius on screen
   const CLUSTER_PX = 15; // markers closer than this on screen become one "×N" marker
   const EDGE_PAD_PX = 13; // targets beyond the visible map are pinned this far inside its edge
@@ -608,7 +608,7 @@
     homeLayer.textContent = '';
     if (!home || !opts.markers || !unitsPerPx) return;
     const u = unitsPerPx;
-    const g = svgEl('g', { class: 'nep-home ui', transform: `translate(${home.x.toFixed(3)} ${home.y.toFixed(3)})` });
+    const g = svgEl('g', { class: 'nep-home ui' + (opts.homeRing ? ' ring' : ''), transform: `translate(${home.x.toFixed(3)} ${home.y.toFixed(3)})` });
     g.append(
       svgEl('circle', { class: 'rad', r: ((opts.alertKm / kmPerUnit)).toFixed(3) }),
       svgEl('circle', { class: 'hit', r: (9 * u).toFixed(3) }),
