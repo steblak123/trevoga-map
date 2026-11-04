@@ -52,6 +52,13 @@
     .nep-bm-sat { background: radial-gradient(circle at 30% 30%, #4b6b3a, transparent 55%), radial-gradient(circle at 80% 70%, #7a6a4a, transparent 50%), linear-gradient(135deg, #2f4a2a, #3b3a2a); }
     .nep-bm-dark { background: linear-gradient(160deg, transparent 46%, #93b0cc 47% 49%, transparent 50%), radial-gradient(circle at 70% 70%, rgba(239,68,68,.45) 0 22%, transparent 23%), radial-gradient(circle at 30% 30%, #24331f, transparent 55%), linear-gradient(135deg, #161d16, #11151a); }
     .nep-bm-hybrid { background: linear-gradient(160deg, transparent 46%, #ffd36e 47% 50%, transparent 51%), radial-gradient(circle at 30% 30%, #4b6b3a, transparent 55%), radial-gradient(circle at 80% 70%, #7a6a4a, transparent 50%), linear-gradient(135deg, #2f4a2a, #3b3a2a); }`;
+  bmCss.textContent += `
+    .nep-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 2px 0 4px 24px; }
+    .nep-chips:empty { display: none; }
+    .nep-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 3px 2px 8px; border-radius: 12px; border: 1px solid var(--line); background: #121822; font-size: 12.5px; }
+    .nep-chip a { color: var(--text); text-decoration: none; }
+    .nep-chip button { padding: 0 6px; border: 0; background: transparent; color: var(--muted); font-size: 14px; line-height: 18px; border-radius: 9px; cursor: pointer; }
+    .nep-chip button:hover { background: #2c3a52; color: var(--text); }`;
   document.head.appendChild(bmCss);
   const section = document.createElement('section');
   section.innerHTML = `
@@ -79,10 +86,12 @@
         (клік правою кнопкою → числа), або кнопка ⌖ на карті віджета.</div>
       <div class="inline" style="padding:2px 0 2px 24px">
         <span class="hint">Мої канали Telegram</span>
-        <input type="text" id="nep-channels" placeholder="t.me/shpk_krop t.me/krop_vanek" style="flex:1" spellcheck="false">
+        <input type="text" id="nep-channels" placeholder="Вставте посилання: t.me/shpk_krop" style="flex:1" spellcheck="false">
+        <button id="nep-chAdd" type="button">Додати</button>
       </div>
-      <div class="hint" style="padding-left:24px">Публічні канали, через пробіл. Їхні пости показуються в джерелах при наведенні, дають вибухи, а слово «реактивний» у них
-        одразу робить шахед реактивним (вашим каналам довіряємо).</div>
+      <div id="nep-chList" class="nep-chips"></div>
+      <div class="hint" style="padding-left:24px">Публічні канали. Їхні пости показуються в джерелах при наведенні, дають вибухи, а слово
+        «реактивний» у них одразу робить шахед реактивним (вашим каналам довіряємо). Можна вставити кілька посилань одразу.</div>
       <div class="inline" style="padding:2px 0 2px 24px">
         <label class="row"><input type="checkbox" id="nep-alertSound"> Звук сповіщення</label>
         <button id="nep-test" type="button">Перевірити</button>
@@ -108,7 +117,7 @@
 
   function sync() {
     q('more').style.opacity = current.markers ? '' : '0.45';
-    for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test', 'home', 'homeClear', 'channels']) q(id).disabled = !current.markers;
+    for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test', 'home', 'homeClear', 'channels', 'chAdd']) q(id).disabled = !current.markers;
     for (const r of sides) r.disabled = !current.markers;
     km.disabled = q('alertSound').disabled = q('test').disabled = !current.markers || !current.alert;
   }
@@ -121,7 +130,7 @@
     for (const r of sides) r.checked = r.value === current.cardSide;
     for (const r of basemaps) r.checked = r.value === current.basemap;
     for (const r of styles) r.checked = r.value === current.style;
-    if (document.activeElement !== q('channels')) q('channels').value = (current.channels || []).map((c) => 't.me/' + c).join(' ');
+    drawChannels();
     if (document.activeElement !== q('home')) q('home').value = current.home ? `${current.home.lat}, ${current.home.lon}` : '';
     sync();
   }
@@ -149,7 +158,24 @@
   });
   const chIn = q('channels');
   const parseChannels = (v) => [...new Set(String(v).split(/[\s,;]+/).map((x) => x.replace(/^(https?:\/\/)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@/, '').replace(/[/?#].*$/, '')).filter((x) => /^[A-Za-z0-9_]{4,32}$/.test(x)))];
-  chIn.addEventListener('change', () => save({ channels: parseChannels(chIn.value) }));
+  function addChannels() {
+    const found = parseChannels(chIn.value);
+    chIn.style.outline = found.length || !chIn.value.trim() ? '' : '2px solid #ff4d57';
+    if (!found.length) return;
+    chIn.value = '';
+    save({ channels: [...new Set([...(current.channels || []), ...found])].slice(0, 12) });
+  }
+  q('chAdd').addEventListener('click', addChannels);
+  chIn.addEventListener('keydown', (e) => e.key === 'Enter' && addChannels());
+  q('chList').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-ch]');
+    if (b) save({ channels: (current.channels || []).filter((c) => c !== b.dataset.ch) });
+  });
+  function drawChannels() {
+    q('chList').innerHTML = (current.channels || [])
+      .map((c) => `<span class="nep-chip"><a href="https://t.me/${c}" target="_blank">@${c}</a><button type="button" data-ch="${c}" title="Прибрати">×</button></span>`)
+      .join('');
+  }
   q('homeClear').addEventListener('click', () => {
     homeIn.value = '';
     save({ home: null });
