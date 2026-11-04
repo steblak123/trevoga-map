@@ -58,6 +58,7 @@
       this.index = new Map(); // place key -> [{ at, mode, channel, text }] newest first
       this.timer = null;
       this.listeners = new Set();
+      this.trusted = new Set(); // your own channels ('@name'): one of them is enough for a jet
       this.version = 0;
     }
 
@@ -134,6 +135,11 @@
       for (const list of this.index.values()) list.sort((a, b) => b.at - a.at);
     }
 
+    // Posts from elsewhere (your own Telegram channels, read by main.js).
+    addExternal(posts) {
+      if (this.add(posts)) this.changed();
+    }
+
     changed() {
       this.version++;
       for (const fn of this.listeners) fn();
@@ -156,7 +162,7 @@
       const list = this.mentions(t).filter((x) => x.mode === 'jet' || x.mode === 'plain');
       const jets = list.filter((x) => x.mode === 'jet');
       const channels = new Set(jets.map((x) => x.channel));
-      const official = jets.find((x) => OFFICIAL.test(x.channel));
+      const official = jets.find((x) => OFFICIAL.test(x.channel) || this.trusted.has(x.channel));
       if (official || channels.size >= 2) {
         const x = official || jets[0];
         return { mode: 'jet', at: x.at, channel: x.channel };

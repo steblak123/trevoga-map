@@ -3,7 +3,7 @@
 // Options are kept in settings.json under
 //   "neptun": { markers, panel, hideFpv, alert, alertKm, alertSound, cardSide, basemap }.
 (function () {
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', basemap: 'none', booms: true, ticker: true, style: 'bright', home: null };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', basemap: 'none', booms: true, ticker: true, style: 'bright', home: null, channels: [] };
   const STYLES = [
     ['bright', 'Яскравий', 'кольори, підсвітка'],
     ['calm', 'Акуратний', 'спокійно, без підсвітки'],
@@ -78,6 +78,12 @@
       <div class="hint" style="padding-left:24px">Відстань і радіус рахуються від неї замість меж районів. Координати — з Google Карт
         (клік правою кнопкою → числа), або кнопка ⌖ на карті віджета.</div>
       <div class="inline" style="padding:2px 0 2px 24px">
+        <span class="hint">Мої канали Telegram</span>
+        <input type="text" id="nep-channels" placeholder="t.me/shpk_krop t.me/krop_vanek" style="flex:1" spellcheck="false">
+      </div>
+      <div class="hint" style="padding-left:24px">Публічні канали, через пробіл. Їхні пости показуються в джерелах при наведенні, дають вибухи, а слово «реактивний» у них
+        одразу робить шахед реактивним (вашим каналам довіряємо).</div>
+      <div class="inline" style="padding:2px 0 2px 24px">
         <label class="row"><input type="checkbox" id="nep-alertSound"> Звук сповіщення</label>
         <button id="nep-test" type="button">Перевірити</button>
       </div>
@@ -102,7 +108,7 @@
 
   function sync() {
     q('more').style.opacity = current.markers ? '' : '0.45';
-    for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test', 'home', 'homeClear']) q(id).disabled = !current.markers;
+    for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test', 'home', 'homeClear', 'channels']) q(id).disabled = !current.markers;
     for (const r of sides) r.disabled = !current.markers;
     km.disabled = q('alertSound').disabled = q('test').disabled = !current.markers || !current.alert;
   }
@@ -115,6 +121,7 @@
     for (const r of sides) r.checked = r.value === current.cardSide;
     for (const r of basemaps) r.checked = r.value === current.basemap;
     for (const r of styles) r.checked = r.value === current.style;
+    if (document.activeElement !== q('channels')) q('channels').value = (current.channels || []).map((c) => 't.me/' + c).join(' ');
     if (document.activeElement !== q('home')) q('home').value = current.home ? `${current.home.lat}, ${current.home.lon}` : '';
     sync();
   }
@@ -140,6 +147,9 @@
     homeIn.style.outline = h || !homeIn.value.trim() ? '' : '2px solid #ff4d57';
     if (h || !homeIn.value.trim()) save({ home: h });
   });
+  const chIn = q('channels');
+  const parseChannels = (v) => [...new Set(String(v).split(/[\s,;]+/).map((x) => x.replace(/^(https?:\/\/)?(t\.me|telegram\.me)\/(s\/)?/i, '').replace(/^@/, '').replace(/[/?#].*$/, '')).filter((x) => /^[A-Za-z0-9_]{4,32}$/.test(x)))];
+  chIn.addEventListener('change', () => save({ channels: parseChannels(chIn.value) }));
   q('homeClear').addEventListener('click', () => {
     homeIn.value = '';
     save({ home: null });

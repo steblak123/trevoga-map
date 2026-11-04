@@ -12,7 +12,7 @@
   const ipc = bridge.neptun || null; // preload.js hook; without it there is no banner
   // Projection of app/assets/map.json (see build/make-map.js), for a map.json without "proj".
   const DEFAULT_PROJ = { lat1: 45, lat2: 51, lat0: 48.5, lon0: 31.5, x0: -690178, y1: 432316, k: 0.000755630581276381 };
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright', home: null };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright', home: null, channels: [] };
   const BADGE_PX = 9; // marker radius on screen
   const CLUSTER_PX = 15; // markers closer than this on screen become one "×N" marker
   const EDGE_PAD_PX = 13; // targets beyond the visible map are pinned this far inside its edge
@@ -1573,10 +1573,14 @@
       client.stop();
       if (intel) intel.stop();
     }
+    if (intel) intel.trusted = new Set((opts.channels || []).map((c) => '@' + c));
+    if (ipc) ipc.send('tg-channels', opts.markers ? opts.channels : []);
     renderAll();
   }
 
   if (intel) intel.onUpdate(() => opts.markers && renderAll()); // new posts can change jet / plain
+  // Your own Telegram channels: main.js reads them and sends the posts back.
+  if (ipc && intel) ipc.on('tg-posts', (posts) => intel.addExternal(posts));
 
   client.subscribe((kind) => {
     if (kind === 'data') {

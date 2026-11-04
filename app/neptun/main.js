@@ -81,3 +81,69 @@ ipcMain.on('neptun:alert-size', (_e, { width, height }) => {
 
 // The banner faded out by itself.
 ipcMain.on('neptun:alert-done', hide);
+
+// ---------- your own Telegram channels ----------
+// Public channels have a web preview, https://t.me/s/<channel>: the latest posts, no login, no bot. The widget
+// sends the list (settings.neptun.channels) over "neptun:tg-channels"; the posts go back over "neptun:tg-posts"
+// as { channel: '@name', date, text } — the same shape as the posts of the NEPTUN feed, so they take part in
+// telling a jet Shahed, in the sources shown on hover and in the explosions.
+const TG_EVERY = 45000;
+const TG_NAME = /^[A-Za-z0-9_]{4,32}$/;
+let tgSender = null;
+let tgList = [];
+let tgTimer = null;
+
+const decode = (s) =>
+  s
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&#(\d+);/g, (_m, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .trim();
+
+// Posts of the t.me/s page: a post's own text is the block marked js-message_text (a quoted reply is another one).
+function parseTg(html, name) {
+  const out = [];
+  for (const block of html.split('tgme_widget_message_wrap').slice(1)) {
+    const text = /class="tgme_widget_message_text js-message_text"[^>]*>([\s\S]*?)<\/div>/.exec(block);
+    const time = /<time[^>]*datetime="([^"]+)"/.exec(block);
+    if (!text || !time) continue;
+    const t = decode(text[1]);
+    if (t) out.push({ channel: '@' + name, date: time[1], text: t });
+  }
+  return out;
+}
+
+async function pollTg() {
+  if (!tgSender || tgSender.isDestroyed() || !tgList.length) return;
+  const posts = [];
+  await Promise.all(
+    tgList.map(async (name) => {
+      try {
+        const res = await fetch(`https://t.me/s/${name}`, { headers: { 'User-Agent': 'Mozilla/5.0 trevoga-map' }, signal: AbortSignal.timeout(15000) });
+        if (res.ok) posts.push(...parseTg(await res.text(), name));
+      } catch (e) {
+        console.log('[telegram]', name, e.message);
+      }
+    }),
+  );
+  if (posts.length && !tgSender.isDestroyed()) tgSender.send('neptun:tg-posts', posts);
+}
+
+ipcMain.on('neptun:tg-channels', (e, list) => {
+  tgSender = e.sender;
+  const next = [...new Set((Array.isArray(list) ? list : []).map((n) => String(n).trim()).filter((n) => TG_NAME.test(n)))].slice(0, 12);
+  if (next.join() === tgList.join() && tgTimer) return;
+  tgList = next;
+  clearInterval(tgTimer);
+  tgTimer = null;
+  if (!tgList.length) return;
+  pollTg();
+  tgTimer = setInterval(pollTg, TG_EVERY);
+});
+
+module.exports = { parseTg };
