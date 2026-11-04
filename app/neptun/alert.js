@@ -46,7 +46,8 @@ function entry(i) {
   const badges =
     (i.place ? `<span class="h-b place">${PIN}${esc(i.place)}</span>` : '') +
     `<span class="h-b dist">${dist}</span>` +
-    (i.eta ? `<span class="h-b eta">${CLOCK}${i.eta}<small>хв</small></span>` : '');
+    (i.eta ? `<span class="h-b eta">${CLOCK}${i.eta}<small>хв</small></span>` : '') +
+    (i.src ? `<span class="h-b src">${esc(i.src)}</span>` : '');
   return (
     `<div class="h-ent r${i.risk || 0}" style="--c:${meta.color}">` +
     `<span class="h-ent-ico" style="--c:${meta.color}"><svg class="h-ico" viewBox="-12 -12 24 24">${meta.icon}</svg></span>` +

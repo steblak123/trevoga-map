@@ -69,8 +69,9 @@
   function setHint(fn) {
     hint = fn;
   }
-  // A course for a track NEPTUN gives none: the way your channels say it went ("→Нова Прага" after
-  // "Новий Стародуб"), degrees, or null (widget.js, from intel.js / routes.js).
+  // The course your channels say a track took ("→Нова Прага" after "Новий Стародуб"; "Відвернув на
+  // Братське" in a reply turns it): { heading, at } or null (widget.js, from intel.js / routes.js). It is used
+  // when NEPTUN gives no course, and instead of NEPTUN's when the post is newer than NEPTUN's update.
   let course = null;
   function setCourse(fn) {
     course = fn;
@@ -98,22 +99,22 @@
   // Current position of a track: moved along its velocity since confirmedAt, within the type's limits.
   function predict(t, now) {
     const v = t.velocity;
-    const heading = t.heading != null && Number.isFinite(t.heading) ? t.heading : null;
+    const own = t.heading != null && Number.isFinite(t.heading) ? t.heading : null;
+    const c = course && !t.areaOnly ? course(t) : null;
+    const newer = !!c && c.at > (Date.parse(t.updatedAt || t.confirmedAt) || 0);
     if (!t.areaOnly && v && Number.isFinite(v.speedKmh) && Number.isFinite(v.bearingDeg) && t.confirmedAt && t.status !== 'stale') {
       const meta = typeMeta(kindOf(t));
+      const bearing = newer ? c.heading : v.bearingDeg;
       const ageMin = (now - Date.parse(t.confirmedAt)) / 60000;
       if (ageMin > 0) {
         const km = Math.min(meta.maxKm, (v.speedKmh * Math.min(ageMin, meta.horizonMin)) / 60);
-        const [lat, lon] = Geo.dest(t.lat, t.lon, v.bearingDeg, km);
-        return { lat, lon, heading: v.bearingDeg, km, flying: ageMin <= meta.horizonMin && km > 0.05 };
+        const [lat, lon] = Geo.dest(t.lat, t.lon, bearing, km);
+        return { lat, lon, heading: bearing, km, flying: ageMin <= meta.horizonMin && km > 0.05, byPosts: newer };
       }
-      return { lat: t.lat, lon: t.lon, heading: v.bearingDeg, km: 0, flying: true };
+      return { lat: t.lat, lon: t.lon, heading: bearing, km: 0, flying: true, byPosts: newer };
     }
-    if (heading == null && course && !t.areaOnly) {
-      const c = course(t);
-      if (c != null) return { lat: t.lat, lon: t.lon, heading: c, km: 0, flying: false, byPosts: true };
-    }
-    return { lat: t.lat, lon: t.lon, heading, km: 0, flying: false };
+    if (c && (own == null || newer)) return { lat: t.lat, lon: t.lon, heading: c.heading, km: 0, flying: false, byPosts: true };
+    return { lat: t.lat, lon: t.lon, heading: own, km: 0, flying: false };
   }
 
   root.NeptunTypes = { TYPES, ORDER, typeMeta, kindOf, classify, setHint, setCourse, predict };

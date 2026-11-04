@@ -122,6 +122,8 @@
   animation: none;
 }
 .nep-marker.vague { opacity: 0.5; }
+/* a target only your channel has so far: dashed ring */
+.nep-marker.tg .halo { stroke-dasharray: 3 2.2; }
 .nep-marker.vague .halo { stroke-dasharray: 1.6 2.2; }
 .nep-marker.vague:hover, .nep-marker.vague.sel { opacity: 1; }
 
@@ -568,6 +570,8 @@ body.nep-calm .nep-targets .h-title { color: var(--calm-ink) !important; }
 .nep-home .hit { fill: transparent; }
 .nep-home .rad { fill: rgba(127, 220, 255, 0.045); stroke: rgba(150, 230, 255, 0.85); stroke-width: 1.4px; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
 .nep-home.ring .rad { opacity: 0.7; }
+.nep-home .rad.m { fill: rgba(255, 110, 120, 0.025); stroke: rgba(255, 130, 140, 0.8); stroke-width: 1.1px; stroke-dasharray: 2 4; }
+.nep-home.ring .rad.m { opacity: 0.55; }
 .nep-home:hover .rad { opacity: 1; }
 body.nep-placing #map, body.nep-placing .nep-marker { cursor: crosshair; }
 #nep-zoom button.on { background: #1f4f6b; color: #fff; border-color: #4fc3f7; }

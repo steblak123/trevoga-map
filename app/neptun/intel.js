@@ -11,6 +11,7 @@
 (function (root) {
   const URL = 'https://neptun.in.ua/api/v1/messages';
   const EVERY = 30000;
+  const FAST_EVERY = 10000; // while a target is in your radius (the API allows every 5 s)
   const KEEP_MS = 45 * 60000;
   const BEFORE_MS = 20 * 60000; // a post may name a place up to this long before the track was last updated
   const SAME_MS = 3 * 60000; // the same text of the same channel within this time is the same post
@@ -81,7 +82,17 @@
     start() {
       if (this.timer) return;
       this.poll();
-      this.timer = setInterval(() => this.poll(), EVERY);
+      this.timer = setInterval(() => this.poll(), this.fast ? FAST_EVERY : EVERY);
+    }
+
+    // Faster while something is close (widget.js).
+    setFast(on) {
+      if (!!on === !!this.fast) return;
+      this.fast = !!on;
+      if (!this.timer) return;
+      clearInterval(this.timer);
+      this.timer = null;
+      this.start();
     }
 
     stop() {

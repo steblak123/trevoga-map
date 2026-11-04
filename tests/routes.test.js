@@ -307,3 +307,33 @@ test('main.js reads the post number and the post it answers from t.me/s', () => 
     { channel: '@krop_vanek', id: 35870, date: '2026-11-04T14:02:11+00:00', text: '→Нова Прага', reply: { id: 35869, text: 'Реактивний на Новий Стародуб' } },
   ]);
 });
+
+// ---------- a reply that turns the target ----------
+
+test('a reply that turns the target changes its route and course: "Відвернув на Варварівку/Братське"', () => {
+  const { read } = run(week('krop_vanek'));
+  const a = one(read, 35390); // "↳ В бік Долинської чз Гурівку"
+  const b = one(read, 35391); // "↳ Відвернув на Варварівку/Братське"
+  assert.equal(b.track, a.track);
+  assert.equal(a.to, 'Долинської');
+  assert.equal(b.to, 'Варварівку/Братське');
+  assert.ok(Math.abs(((b.heading - a.heading + 540) % 360) - 180) > 60, `the course turned: ${a.heading} → ${b.heading}`);
+  const c = one(read, 35328); // "↳ Назад на Миколаївщину в бік Первомайська"
+  assert.equal(c.to, 'Миколаївщина');
+  assert.ok(c.heading > 220 && c.heading < 300, `back west: ${c.heading}`);
+});
+
+test('types.predict: the channel course is used when NEPTUN has none, and over NEPTUN\'s when the post is newer', () => {
+  global.Geo = Geo;
+  require('../app/neptun/types.js');
+  const T = global.NeptunTypes;
+  const t = { id: 'a', type: 'uav', lat: 48.5, lon: 32.2, heading: 90, updatedAt: '2026-11-04T14:00:00Z' };
+  T.setCourse(() => ({ heading: 270, at: Date.parse('2026-11-04T13:58:00Z') }));
+  assert.equal(T.predict(t, Date.now()).heading, 90, 'an older post does not override NEPTUN');
+  T.setCourse(() => ({ heading: 270, at: Date.parse('2026-11-04T14:02:00Z') }));
+  const p = T.predict(t, Date.now());
+  assert.equal(p.heading, 270, 'a newer post does');
+  assert.equal(p.byPosts, true);
+  assert.equal(T.predict({ ...t, heading: null }, Date.now()).heading, 270);
+  T.setCourse(null);
+});

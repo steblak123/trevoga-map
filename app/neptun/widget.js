@@ -12,7 +12,7 @@
   const ipc = bridge.neptun || null; // preload.js hook; without it there is no banner
   // Projection of app/assets/map.json (see build/make-map.js), for a map.json without "proj".
   const DEFAULT_PROJ = { lat1: 45, lat2: 51, lat0: 48.5, lon0: 31.5, x0: -690178, y1: 432316, k: 0.000755630581276381 };
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [] };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertKmMissile: 50, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [], tgTargets: true };
   const BADGE_PX = 9; // marker radius on screen
   const CLUSTER_PX = 15; // markers closer than this on screen become one "×N" marker
   const EDGE_PAD_PX = 13; // targets beyond the visible map are pinned this far inside its edge
@@ -27,6 +27,8 @@
   // drones usually circle without one, so they are always drawn.
   const SHAHEDS = new Set(['uav', 'jet']);
   const FAST = new Set(['missile', 'ballistic', 'jet', 'kab', 'mig31k']);
+  // Two radii: one for drones, one for missiles, KABs and aviation (they come from farther, faster).
+  const MISSILES = new Set(['missile', 'ballistic', 'kab', 'mig31k']);
   // Direction sector length by kind: [km at most, km when the speed is unknown]; missiles reach far ahead.
   const AHEAD = { missile: [160, 110], ballistic: [140, 90], jet: [120, 80], mig31k: [100, 70], kab: [45, 30] };
   const CONFIDENCE = { high: 'висока', medium: 'середня', low: 'низька' };
@@ -63,12 +65,12 @@
     return a ? a.mode : null;
   });
 
-  // Courseless tracks take the course of your channels' route near them, if it is fresh (10 min).
+  // Tracks take the course of your channels' route near them (10 min fresh): when NEPTUN has none, or when the post is newer.
   if (window.NeptunTypes.setCourse) {
     window.NeptunTypes.setCourse((t) => {
       if (!intel || !intel.routes || vagueOf(t)) return null; // a raion-level point is too rough to match
       const r = intel.routeOf(t, 10 * 60000);
-      return r && r.heading != null && r.points.length >= 2 ? r.heading : null;
+      return r && r.heading != null && r.points.length >= 2 ? { heading: r.heading, at: r.at } : null;
     });
   }
 
@@ -321,7 +323,75 @@
 
   // Targets the user wants to see: the FPV filter applies to the map, the dock, tiles and banners alike.
   const visible = (t) => !(opts.hideFpv && kindOf(t) === 'fpv');
-  const targets = () => client.list().filter(visible);
+  const targets = () => [...client.list(), ...channelTargets()].filter(visible);
+  const getTarget = (id) => (typeof id === 'string' && id.startsWith('tg:') ? channelTargets().find((t) => t.id === id) : client.threats.get(id));
+
+  // ---------- targets of your channels that NEPTUN has not got (yet) ----------
+  // Your local channels often write minutes before NEPTUN has a track. Such a target (routes.js: the latest
+  // point of a route of one of your channels) is drawn with a dashed ring, counts for the radius and the banner,
+  // until NEPTUN has one of its kind within 25 km of it, or the channel has not written of it for a few minutes.
+  const TG_TYPE = { jet: 'uav', plain: 'uav', missile: 'missile', kab: 'kab', recon: 'recon', fpv: 'fpv' };
+  const TG_FRESH_MIN = { jet: 5, missile: 3, kab: 3 }; // others 8
+  const TG_SAME_KM = 25;
+  let tgCache = { k: '', list: [] };
+  let clientRev = 0;
+  function channelTargets() {
+    if (!opts.markers || !opts.tgTargets || !intel || !intel.routes || !projDef || !project) return [];
+    const now = Date.now();
+    const k = `${intel.version}|${clientRev}|${Math.floor(now / 2000)}`;
+    if (tgCache.k === k) return tgCache.list;
+    const un = Geo.mapUnprojector(projDef);
+    const neptun = client.list().filter((t) => !t.areaOnly && Number.isFinite(t.lat));
+    const list = [];
+    for (const s of intel.routes.live(now, 8 * 60000)) {
+      if (!intel.trusted.has(String(s.channel).toLowerCase())) continue;
+      if (now - s.at > (TG_FRESH_MIN[s.kind] || 8) * 60000) continue;
+      const type = TG_TYPE[s.kind] || 'unknown';
+      const [lat, lon] = un(s.pos.x, s.pos.y);
+      const missile = MISSILES.has(type);
+      const known = neptun.some((t) => {
+        if (MISSILES.has(kindOf(t)) !== missile) return false;
+        const p = predict(t, now);
+        return Geo.distanceKm(p.lat, p.lon, lat, lon) <= TG_SAME_KM;
+      });
+      if (known) continue;
+      const iso = new Date(s.at).toISOString();
+      list.push({
+        id: 'tg:' + s.track,
+        type,
+        subtype: s.kind === 'jet' ? 'jet' : undefined,
+        title: typeMeta(s.kind === 'jet' ? 'jet' : type).short,
+        lat,
+        lon,
+        heading: s.heading,
+        locality: s.pos.name.split('/')[0],
+        region: '',
+        district: '',
+        updatedAt: iso,
+        confirmedAt: iso,
+        status: 'active',
+        sourceCount: 1,
+        count: s.count > 1 ? s.count : undefined,
+        positionQuality: s.pos.est ? 'approx' : 'confirmed',
+        uncertaintyKm: s.pos.est ? 10 : 5,
+        explanationShort: `${s.channel}: ${s.text}`,
+        tg: { channel: s.channel, text: s.text, at: s.at },
+      });
+    }
+    tgCache = { k, list };
+    return list;
+  }
+
+  // Faster reading of the channels (main.js) and of NEPTUN's posts (intel.js) while a target is in your
+  // radius or your regions are under an alert.
+  let fastNow = false;
+  function setFast(on) {
+    if (on === fastNow) return;
+    fastNow = on;
+    if (intel) intel.setFast(on);
+    if (ipc) ipc.send('tg-fast', on);
+  }
+  const alertInMine = () => !!(R && alertState.iot && mine.some((s) => R.statusOf(alertState.iot, s.uid) !== 'N'));
   const pointTargets = () => targets().filter((t) => !t.areaOnly);
   const courseless = (t, now) => SHAHEDS.has(kindOf(t)) && predict(t, now).heading == null;
 
@@ -427,6 +497,11 @@
     return near;
   }
 
+  const radiusOf = (t) => (MISSILES.has(kindOf(t)) ? opts.alertKmMissile : opts.alertKm);
+  // "20 км" or "20 км · ракети 50 км"; short: "20 / 50 км".
+  const radiusText = (short) =>
+    opts.alertKmMissile === opts.alertKm ? `${opts.alertKm} км` : short ? `${opts.alertKm} / ${opts.alertKmMissile} км` : `${opts.alertKm} км · ракети ${opts.alertKmMissile} км`;
+
   // Status of a target relative to your regions: over a region, closing in, moving away, or unknown.
   function statusKey(near) {
     if (!near) return 'unk';
@@ -439,7 +514,7 @@
   // Threat level 0 low / 1 medium / 2 high of one target for your regions.
   function targetRisk(t, near) {
     if (!near) return 0;
-    const r = opts.alertKm;
+    const r = radiusOf(t);
     const appr = near.trend === 'наближається';
     if (near.km < 0.5 || (appr && near.km <= r) || (FAST.has(kindOf(t)) && near.km <= r * 2)) return 2;
     if (near.km <= r || (appr && near.km <= r * 3)) return 1;
@@ -607,6 +682,7 @@
       adv: members.every((i) => i.t.advisory),
       stale: members.every((i) => i.t.status === 'stale'),
       faint: members.every((i) => i.faint),
+      tg: members.every((i) => !!i.t.tg),
       vague: members.every((i) => vagueOf(i.t)),
       dest: members.every((i) => i.t.destination && i.p.angle == null),
       sel: members.length === 1 && lead.t.id === selected,
@@ -641,6 +717,7 @@
       cls.toggle('stale', u.stale);
       cls.toggle('faint', u.faint && !u.stale);
       cls.toggle('vague', !!u.vague);
+      cls.toggle('tg', !!u.tg);
       cls.toggle('dest', !!u.dest);
       cls.toggle('sel', u.sel || (!!group && u.ids.some((id) => group.includes(id))));
       m.el.style.display = '';
@@ -674,6 +751,8 @@
     if (!home || !opts.markers || !unitsPerPx) return;
     const u = unitsPerPx;
     const g = svgEl('g', { class: 'nep-home ui' + (opts.homeRing ? ' ring' : ''), transform: `translate(${home.x.toFixed(3)} ${home.y.toFixed(3)})` });
+    // The drones' radius, and the missiles' one (thinner, sparser dashes) when it differs.
+    if (opts.alertKmMissile !== opts.alertKm) g.append(svgEl('circle', { class: 'rad m', r: (opts.alertKmMissile / kmPerUnit).toFixed(3) }));
     g.append(
       svgEl('circle', { class: 'rad', r: ((opts.alertKm / kmPerUnit)).toFixed(3) }),
       svgEl('circle', { class: 'hit', r: (9 * u).toFixed(3) }),
@@ -718,7 +797,7 @@
   svg.addEventListener('nep-place-home', () => setPlacing(!placing));
   document.addEventListener('mousemove', (ev) => {
     const h = ev.target.closest && ev.target.closest('.nep-home');
-    if (h) showTip(`<div class="tt-h"><b>Ваша точка</b></div><div class="tt-s">радіус ${opts.alertKm} км · змінити: ⌖</div>`, ev);
+    if (h) showTip(`<div class="tt-h"><b>Ваша точка</b></div><div class="tt-s">радіус ${radiusText()} · змінити: ⌖</div>`, ev);
   });
 
   // ---------- explosions ----------
@@ -880,7 +959,7 @@
   // Course line and uncertainty circle of the selected target (when it is in view).
   function drawSelection(now) {
     selLayer.textContent = '';
-    const t = selected && client.threats.get(selected);
+    const t = selected && getTarget(selected);
     const m = svg.getScreenCTM();
     if (!t || t.areaOnly || !opts.markers || !project || !unitsPerPx || !m) return;
     const p = placeOf(t, now);
@@ -1004,7 +1083,7 @@
     for (const t of pointTargets()) {
       const near = nearOf(t, now);
       if (!near) continue;
-      const limit = inside.has(t.id) ? opts.alertKm * 1.3 : opts.alertKm;
+      const limit = inside.has(t.id) ? radiusOf(t) * 1.3 : radiusOf(t);
       if (near.km > limit) continue;
       seen.add(t.id);
       if (!inside.has(t.id)) {
@@ -1042,6 +1121,7 @@
         place: placeShort(t),
         km: Math.round(near.km),
         vague: !!vagueOf(t), // "Кропивницький р-н": the distance is a rough one
+        src: t.tg ? t.tg.channel : '', // only your channel has it so far
         name: shortName(near.name),
         trend: near.trend || '',
         status: statusKey(near),
@@ -1155,7 +1235,7 @@
       .map((x) => x.t);
     const fresh = (t) => (freshUntil.get(t.id) || 0) > now;
     let body = close.map((t) => entryHtml(t, now, { fresh: fresh(t) })).join('');
-    if (!close.length) body += `<div class="h-sep">Поруч нікого · до ${opts.alertKm} км</div>`;
+    if (!close.length) body += `<div class="h-sep">Поруч нікого · до ${radiusText()}</div>`;
     if (further.length) body += (close.length ? `<div class="h-sep">Далі</div>` : '') + further.map((t) => entryHtml(t, now, { compact: true })).join('');
     return head + `<div class="h-list">${body}</div>`;
   }
@@ -1170,13 +1250,17 @@
     let note = '';
     const vg = vagueOf(t);
     if (t.areaOnly) note = 'Лише область';
+    else if (t.tg) note = 'Лише з каналу';
     else if (vg && vg.raion) note = 'Десь у районі';
     else if (vg) note = `Приблизно, ±${Math.round(vg.km)} км`;
     else if (t.destination) note = 'Розрахункова позиція';
     else if (p.flying && p.km > 0.5) note = `За курсом +${Math.round(p.km)} км`;
     else if (t.advisory) note = 'Спостереження';
     else if (t.status === 'stale') note = 'Застарілі дані';
-    const course = p.heading == null ? `<span class="h-b none">—</span>` : `<span class="h-b dir">${arrowIco(p.angle == null ? p.heading : p.angle)}на ${compass8(p.heading)}<small>${Math.round(p.heading)}°</small></span>`;
+    const course =
+      p.heading == null
+        ? `<span class="h-b none">—</span>`
+        : `<span class="h-b dir">${arrowIco(p.angle == null ? p.heading : p.angle)}на ${compass8(p.heading)}<small>${Math.round(p.heading)}°</small></span>${p.byPosts ? '<small>за каналом</small>' : ''}`;
     const o = originOf(t, now);
     const from = o ? `<span class="h-b dir">з ${compass8(o.bearing)}</span><small>${esc(originText(o))}${o.est ? ' · оцінка' : ''}</small>` : '—';
     const eta = etaMin(t, near);
@@ -1187,8 +1271,9 @@
       // What told the kind: a post about the place (and its time), NEPTUN's own words, the speed.
       const h = hintCache.get(t.id);
       const chan = h && h.channel ? esc(h.channel.length > 18 ? h.channel.slice(0, 17) + '…' : h.channel) : 'пост';
-      const why =
-        by === 'post' && h && h.at
+      const why = t.tg
+        ? esc(t.tg.channel)
+        : by === 'post' && h && h.at
           ? `${chan} ${hhmm(h.at)}`
           : by === 'maybe' && h ? `можливо реактивний · ${chan}` : by === 'text' ? 'опис' : by === 'speed' ? `${speed} км/год` : by ? '' : 'ймовірно';
       typeCell = `<span class="h-k">Тип</span><span class="h-v">${kind === 'jet' ? '<span class="h-b jet">Реактивний</span>' : '<span class="h-b plain">Звичайний</span>'}${why ? `<small>${why}</small>` : ''}</span>`;
@@ -1251,8 +1336,8 @@
   }
 
   function renderTargets(now) {
-    const t = selected && client.threats.get(selected);
-    const list = group ? group.map((id) => client.threats.get(id)).filter((x) => x && visible(x)).sort(bySeverity) : [];
+    const t = selected && getTarget(selected);
+    const list = group ? group.map((id) => getTarget(id)).filter((x) => x && visible(x)).sort(bySeverity) : [];
     if (t && visible(t)) return setHtml(targetsEl, detailsHtml(t, now));
     if (list.length) return setHtml(targetsEl, groupPanelHtml(list, now));
     selected = group = null;
@@ -1345,7 +1430,7 @@
           icon: ico('pin'),
           label: 'Біля вас',
           value: close.length,
-          sub: `до ${opts.alertKm} км`,
+          sub: `до ${radiusText(true)}`,
           values: series('near', close.length),
           hot: close.length > 0,
           data: { near: '1' },
@@ -1492,7 +1577,7 @@
 
   function tileHead(el) {
     if (el.dataset.all) return 'Усі цілі';
-    if (el.dataset.near) return `До ${opts.alertKm} км від вас`;
+    if (el.dataset.near) return `До ${radiusText()} від вас`;
     return TYPES[el.dataset.type].label;
   }
 
@@ -1500,7 +1585,7 @@
     const now = Date.now();
     const mk = ev.target.closest && ev.target.closest('.nep-marker');
     if (mk && mk.dataset.ids && !svg.classList.contains('nep-panning')) {
-      const list = mk.dataset.ids.split(',').map((id) => client.threats.get(id)).filter(Boolean);
+      const list = mk.dataset.ids.split(',').map((id) => getTarget(id)).filter(Boolean);
       setHover(list.length === 1 ? list[0].id : null);
       if (list.length === 1 && list[0].id !== selected) return showTip(targetTip(list[0], now, mk.classList.contains('edge')), ev);
       if (list.length > 1) return showTip(listTip(`Група ×${sumSize(list)}`, list.sort(bySeverity), now), ev);
@@ -1632,6 +1717,7 @@
     const now = Date.now();
     nearCache.clear();
     const entered = trackNear(now);
+    setFast(opts.markers && (inside.size > 0 || alertInMine()));
     if (quiet) quiet = false;
     else alertEntered(entered, now);
     layer.style.display = opts.markers ? '' : 'none';
@@ -1692,6 +1778,7 @@
 
   client.subscribe((kind) => {
     if (kind === 'data') {
+      clientRev++;
       newTargets();
       renderAll();
     }

@@ -87,7 +87,14 @@ ipcMain.on('neptun:alert-done', hide);
 // sends the list (settings.neptun.channels) over "neptun:tg-channels"; the posts go back over "neptun:tg-posts"
 // as { channel: '@name', id, date, text, reply: { id, text } | null } — the shape of the posts of the NEPTUN feed
 // plus the post number and the post it answers, so routes.js can follow a target from reply to reply.
+// The widget says "fast" ("neptun:tg-fast") while a target is in your radius or your regions are under an alert:
+// then every 8 s. A channel that answers 429 (too many requests) or fails rests for a minute.
 const TG_EVERY = 45000;
+const TG_FAST = 8000;
+const TG_REST = 60000;
+let tgFast = false;
+let tgBusy = false;
+const tgRest = new Map(); // name -> until when it is not asked
 const TG_NAME = /^[A-Za-z0-9_]{4,32}$/;
 let tgSender = null;
 let tgList = [];
@@ -123,31 +130,50 @@ function parseTg(html, name) {
 }
 
 async function pollTg() {
-  if (!tgSender || tgSender.isDestroyed() || !tgList.length) return;
+  if (!tgSender || tgSender.isDestroyed() || !tgList.length || tgBusy) return;
+  tgBusy = true;
   const posts = [];
+  const now = Date.now();
   await Promise.all(
-    tgList.map(async (name) => {
-      try {
-        const res = await fetch(`https://t.me/s/${name}`, { headers: { 'User-Agent': 'Mozilla/5.0 trevoga-map' }, signal: AbortSignal.timeout(15000) });
-        if (res.ok) posts.push(...parseTg(await res.text(), name));
-      } catch (e) {
-        console.log('[telegram]', name, e.message);
-      }
-    }),
+    tgList
+      .filter((name) => !(tgRest.get(name) > now))
+      .map(async (name) => {
+        try {
+          const res = await fetch(`https://t.me/s/${name}`, {
+            headers: { 'User-Agent': 'Mozilla/5.0 trevoga-map', 'Cache-Control': 'no-cache' },
+            signal: AbortSignal.timeout(tgFast ? 7000 : 15000),
+          });
+          if (res.ok) posts.push(...parseTg(await res.text(), name));
+          else tgRest.set(name, Date.now() + TG_REST);
+        } catch (e) {
+          if (!tgFast) tgRest.set(name, Date.now() + TG_REST);
+          console.log('[telegram]', name, e.message);
+        }
+      }),
   );
+  tgBusy = false;
   if (posts.length && !tgSender.isDestroyed()) tgSender.send('neptun:tg-posts', posts);
 }
+
+function scheduleTg() {
+  clearInterval(tgTimer);
+  tgTimer = tgList.length ? setInterval(pollTg, tgFast ? TG_FAST : TG_EVERY) : null;
+}
+
+ipcMain.on('neptun:tg-fast', (_e, on) => {
+  if (!!on === tgFast) return;
+  tgFast = !!on;
+  scheduleTg();
+  if (tgFast) pollTg();
+});
 
 ipcMain.on('neptun:tg-channels', (e, list) => {
   tgSender = e.sender;
   const next = [...new Set((Array.isArray(list) ? list : []).map((n) => String(n).trim()).filter((n) => TG_NAME.test(n)))].slice(0, 12);
   if (next.join() === tgList.join() && tgTimer) return;
   tgList = next;
-  clearInterval(tgTimer);
-  tgTimer = null;
-  if (!tgList.length) return;
-  pollTg();
-  tgTimer = setInterval(pollTg, TG_EVERY);
+  scheduleTg();
+  if (tgList.length) pollTg();
 });
 
 module.exports = { parseTg };

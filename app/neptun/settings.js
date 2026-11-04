@@ -1,14 +1,16 @@
 // "Цілі на карті" section of settings.html. The page needs only
 //   <script src="neptun/settings.js"></script>  after settings.js
 // Options are kept in settings.json under
-//   "neptun": { markers, panel, hideFpv, alert, alertKm, alertSound, cardSide, basemap }.
+//   "neptun": { markers, panel, hideFpv, alert, alertKm (drones), alertKmMissile (missiles, KAB, aviation), alertSound,
+//   cardSide, basemap, style, home, homeRing, channels, tgTargets }.
 (function () {
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertSound: false, cardSide: 'left', basemap: 'none', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [] };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertKmMissile: 50, alertSound: false, cardSide: 'left', basemap: 'none', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [], tgTargets: true };
   const STYLES = [
     ['bright', 'Яскравий', 'кольори, підсвітка'],
     ['calm', 'Акуратний', 'спокійно, без підсвітки'],
   ];
   const RADII = [5, 10, 20, 50];
+  const RADII_M = [10, 20, 50, 100, 150]; // missiles: they come from farther, faster
   const BASEMAPS = [
     ['none', 'Звичайна'],
     ['map', 'Карта з дорогами'],
@@ -74,9 +76,13 @@
         <label class="row"><input type="radio" name="nep-side" value="left"> ліворуч</label>
         <label class="row"><input type="radio" name="nep-side" value="right"> праворуч</label>
       </div>
-      <label class="row"><input type="checkbox" id="nep-alert"> Сповіщати, коли ціль ближче ніж
+      <label class="row"><input type="checkbox" id="nep-alert"> Сповіщати, коли до ваших районів ближче ніж</label>
+      <div class="inline" style="padding:2px 0 2px 24px">
+        <span class="hint">дрони</span>
         <select id="nep-alertKm">${RADII.map((km) => `<option value="${km}">${km} км</option>`).join('')}</select>
-        до ваших районів</label>
+        <span class="hint">ракети, КАБ, авіація</span>
+        <select id="nep-alertKmMissile">${RADII_M.map((km) => `<option value="${km}">${km} км</option>`).join('')}</select>
+      </div>
       <div class="inline" style="padding:2px 0 2px 24px">
         <span class="hint">Моя точка</span>
         <input type="text" id="nep-home" placeholder="50.4501, 30.5234" style="max-width:190px" spellcheck="false">
@@ -92,7 +98,9 @@
       </div>
       <div id="nep-chList" class="nep-chips"></div>
       <div class="hint" style="padding-left:24px">Публічні канали. Їхні пости показуються в джерелах при наведенні, дають вибухи, а слово
-        «реактивний» у них одразу робить шахед реактивним (вашим каналам довіряємо). Можна вставити кілька посилань одразу.</div>
+        «реактивний» у них одразу робить шахед реактивним (вашим каналам довіряємо). Можна вставити кілька посилань одразу.
+        Коли ціль у вашому радіусі або у ваших районах тривога, канали читаються щокілька секунд.</div>
+      <label class="row" style="padding-left:24px"><input type="checkbox" id="nep-tgTargets"> Показувати цілі з моїх каналів, яких ще немає в NEPTUN</label>
       <div class="inline" style="padding:2px 0 2px 24px">
         <label class="row"><input type="checkbox" id="nep-alertSound"> Звук сповіщення</label>
         <button id="nep-test" type="button">Перевірити</button>
@@ -109,18 +117,19 @@
   const styles = [...mapSection.querySelectorAll('input[name=nep-style]')];
 
   const q = (id) => section.querySelector('#nep-' + id);
-  const checks = ['markers', 'panel', 'hideFpv', 'booms', 'ticker', 'homeRing', 'alert', 'alertSound'];
+  const checks = ['markers', 'panel', 'hideFpv', 'booms', 'ticker', 'homeRing', 'alert', 'alertSound', 'tgTargets'];
   const km = q('alertKm');
+  const kmM = q('alertKmMissile');
   const sides = [...section.querySelectorAll('input[name=nep-side]')];
-  km.style.cssText = 'background:#0d1219;color:inherit;border:1px solid #273142;border-radius:6px;padding:2px 4px;font:inherit';
+  km.style.cssText = kmM.style.cssText = 'background:#0d1219;color:inherit;border:1px solid #273142;border-radius:6px;padding:2px 4px;font:inherit';
   let current = { ...DEFAULTS };
   let all = {};
 
   function sync() {
     q('more').style.opacity = current.markers ? '' : '0.45';
-    for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test', 'home', 'homeClear', 'homeRing', 'channels', 'chAdd']) q(id).disabled = !current.markers;
+    for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test', 'home', 'homeClear', 'homeRing', 'channels', 'chAdd', 'tgTargets']) q(id).disabled = !current.markers;
     for (const r of sides) r.disabled = !current.markers;
-    km.disabled = q('alertSound').disabled = q('test').disabled = !current.markers || !current.alert;
+    km.disabled = kmM.disabled = q('alertSound').disabled = q('test').disabled = !current.markers || !current.alert;
   }
 
   function fill(s) {
@@ -128,6 +137,7 @@
     current = { ...DEFAULTS, ...(all.neptun || {}) };
     for (const id of checks) q(id).checked = !!current[id];
     km.value = String(RADII.includes(current.alertKm) ? current.alertKm : DEFAULTS.alertKm);
+    kmM.value = String(RADII_M.includes(current.alertKmMissile) ? current.alertKmMissile : DEFAULTS.alertKmMissile);
     for (const r of sides) r.checked = r.value === current.cardSide;
     for (const r of basemaps) r.checked = r.value === current.basemap;
     for (const r of styles) r.checked = r.value === current.style;
@@ -144,6 +154,7 @@
 
   for (const id of checks) q(id).addEventListener('change', (e) => save({ [id]: e.target.checked }));
   km.addEventListener('change', () => save({ alertKm: Number(km.value) }));
+  kmM.addEventListener('change', () => save({ alertKmMissile: Number(kmM.value) }));
   const homeIn = q('home');
   function parseHome(v) {
     const m = String(v).match(/(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)/);

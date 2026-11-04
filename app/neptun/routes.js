@@ -378,7 +378,7 @@
           continue;
         }
         if (CLEAR.test(line) && !/кроп|місто/i.test(line)) {
-          for (const t of st.tracks.values()) t.gone = true;
+          for (const t of st.tracks.values()) if (t.updated <= at) t.gone = true; // not those named after it
           continue;
         }
         const groups = placesIn(line, this.gaz);
@@ -418,7 +418,7 @@
           let best = null;
           let bd = Infinity;
           for (const t of st.tracks.values()) {
-            if (t.gone || !t.last || at - t.updated > TRACK_MS || used.has(t.id)) continue;
+            if (t.gone || !t.last || at - t.updated > TRACK_MS || t.updated - at > 60000 || used.has(t.id)) continue;
             // A "БпЛА" may turn out jet in a reply; a line that names its kind is about a target of that kind.
             if (lk && t.kind && lk !== t.kind) continue;
             if (!lk && kindHint && t.kind && kindHint !== t.kind) continue;
