@@ -69,6 +69,12 @@
   function setHint(fn) {
     hint = fn;
   }
+  // A course for a track NEPTUN gives none: the way your channels say it went ("→Нова Прага" after
+  // "Новий Стародуб"), degrees, or null (widget.js, from intel.js / routes.js).
+  let course = null;
+  function setCourse(fn) {
+    course = fn;
+  }
   const saysJet = (s) => !!s && JET.test(s) && !NOT_JET.test(s);
   // { kind, by }: by is what told a Shahed's kind: 'subtype' | 'text' | 'post' | 'speed', 'maybe' (one
   // channel says jet: still counted as ordinary, as on NEPTUN's map), or null when nothing did (then it is
@@ -103,8 +109,12 @@
       }
       return { lat: t.lat, lon: t.lon, heading: v.bearingDeg, km: 0, flying: true };
     }
+    if (heading == null && course && !t.areaOnly) {
+      const c = course(t);
+      if (c != null) return { lat: t.lat, lon: t.lon, heading: c, km: 0, flying: false, byPosts: true };
+    }
     return { lat: t.lat, lon: t.lon, heading, km: 0, flying: false };
   }
 
-  root.NeptunTypes = { TYPES, ORDER, typeMeta, kindOf, classify, setHint, predict };
+  root.NeptunTypes = { TYPES, ORDER, typeMeta, kindOf, classify, setHint, setCourse, predict };
 })(self);

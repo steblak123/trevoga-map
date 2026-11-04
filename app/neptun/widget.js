@@ -63,6 +63,15 @@
     return a ? a.mode : null;
   });
 
+  // Courseless tracks take the course of your channels' route near them, if it is fresh (10 min).
+  if (window.NeptunTypes.setCourse) {
+    window.NeptunTypes.setCourse((t) => {
+      if (!intel || !intel.routes || vagueOf(t)) return null; // a raion-level point is too rough to match
+      const r = intel.routeOf(t, 10 * 60000);
+      return r && r.heading != null && r.points.length >= 2 ? r.heading : null;
+    });
+  }
+
   let opts = { ...DEFAULTS, markers: false }; // applySettings() starts the client if enabled
   let volume = 0.7;
   let project = null; // (lat, lon) -> [x, y] in map units
@@ -230,6 +239,8 @@
   // "над морем", or the oblast for area-only reports.
   function placeShort(t) {
     if (t.areaOnly) return shortName(t.region);
+    const vg = vagueOf(t);
+    if (vg && vg.raion) return raionShort(vg.raion);
     if (seaOf(t)) return 'над морем';
     if (t.destination && t.locality) return `→ ${t.locality}`;
     return t.locality || shortName(t.district || t.region || '');
@@ -279,6 +290,9 @@
   // For tooltips: place plus region.
   function placeHtml(t) {
     if (t.areaOnly) return `<b>${esc(t.region)}</b>`;
+    const vg = vagueOf(t);
+    if (vg && vg.raion) return `<b>${esc(raionShort(vg.raion))}</b> <small>місце неточне</small>`;
+    if (vg) return `<b>${esc(t.locality || t.district || t.region)}</b> <small>±${Math.round(vg.km)} км</small>`;
     const sea = seaOf(t);
     if (sea) return `<b>над ${sea}</b>`;
     if (t.destination && t.locality) return `Курс → <b>${esc(t.locality)}</b>`;
@@ -314,11 +328,60 @@
   // Every target is on the map. A Shahed without a course far from your regions is drawn faint: the report
   // names only a place near which it was (NEPTUN leaves such ones off its map and counts them "ще N без курсу").
   function faint(t, now) {
-    if (t.id === selected || (group && group.includes(t.id)) || !courseless(t, now)) return false;
+    if (t.id === selected || (group && group.includes(t.id))) return false;
+    if (vagueOf(t)) return true;
+    if (!courseless(t, now)) return false;
     const near = nearOf(t, now);
     return !near || near.km > HOME_KM;
   }
   const mapTargets = () => pointTargets();
+
+  // A report that names a raion, not a place ("дрон Кропивницький район"): NEPTUN then puts the point at the
+  // town the raion is named after, its centre. Such a target is drawn faint, with the raion outlined, and
+  // its place reads "Кропивницький р-н". Also when NEPTUN itself says the point is only rough (±30 km and more).
+  // { raion: shape | null, km } or null; cached per track update.
+  const RAION_IN = /([А-ЯІЇЄҐ][а-яіїєґ'’ʼ-]+(?:ськ|цьк|зьк)[а-яіїєґ]*)\s+(?:район[а-яіїєґ]*|р-н[а-яіїєґ]*|рн)(?![а-яіїєґ])/;
+  const raionByKey = new Map(); // place key of "Кропивницький" -> raion shape
+  const vagueCache = new Map();
+  function vagueOf(t) {
+    if (t.areaOnly) return null;
+    const v = intel ? intel.version : 0;
+    const c = vagueCache.get(t.id);
+    if (c && c.u === t.updatedAt && c.v === v) return c.r;
+    let r = null;
+    const key = window.NeptunIntel && window.NeptunIntel.placeKey;
+    if (key && raionByKey.size) {
+      const loc = t.locality ? key(t.locality) : '';
+      // The track's own words first, then the posts about it that name its town with "район".
+      const texts = [t.title, t.explanationShort, !t.locality ? t.district : ''];
+      if (intel && loc) for (const m of intel.mentions(t)) texts.push(m.text);
+      for (const s of texts) {
+        const m = RAION_IN.exec(s || '');
+        if (!m) continue;
+        const k = key(m[1]);
+        const shape = raionByKey.get(k);
+        if (shape && (!loc || k.startsWith(loc.slice(0, 5)) || loc.startsWith(k.slice(0, 5)))) {
+          r = { raion: shape, km: t.uncertaintyKm || 25 };
+          break;
+        }
+      }
+    }
+    if (!r && t.positionQuality === 'approx' && t.uncertaintyKm >= 30) r = { raion: null, km: t.uncertaintyKm };
+    if (vagueCache.size > 3000) vagueCache.clear();
+    vagueCache.set(t.id, { u: t.updatedAt, v, r });
+    return r;
+  }
+  // Where to look for the names of a channel's posts before it shows its own area: your point, else your
+  // first region (routes.js; "Веселівка" is the one near you of thirteen).
+  function routesHome() {
+    if (home) return { x: home.x, y: home.y };
+    if (mine.length) {
+      const [x, y] = centroid(mine[0]);
+      return { x, y };
+    }
+    return null;
+  }
+  const raionShort = (shape) => shape.name.replace(/\s*район$/, ' р-н');
 
   // Map position and on-screen heading (degrees clockwise from up) of a target now.
   function placeOf(t, now) {
@@ -544,6 +607,7 @@
       adv: members.every((i) => i.t.advisory),
       stale: members.every((i) => i.t.status === 'stale'),
       faint: members.every((i) => i.faint),
+      vague: members.every((i) => vagueOf(i.t)),
       dest: members.every((i) => i.t.destination && i.p.angle == null),
       sel: members.length === 1 && lead.t.id === selected,
       group: members.length > 1,
@@ -576,6 +640,7 @@
       cls.toggle('adv', u.adv);
       cls.toggle('stale', u.stale);
       cls.toggle('faint', u.faint && !u.stale);
+      cls.toggle('vague', !!u.vague);
       cls.toggle('dest', !!u.dest);
       cls.toggle('sel', u.sel || (!!group && u.ids.some((id) => group.includes(id))));
       m.el.style.display = '';
@@ -899,6 +964,27 @@
       path.style.setProperty('--c', metaOf(list.sort(bySeverity)[0]).color);
       areaLayer.appendChild(path);
     }
+    // Raion-level reports: the raion, thin and dashed (it is where the target may be, not a place);
+    // a rough point of NEPTUN's own: a dashed circle of its uncertainty.
+    const raions = new Map();
+    for (const t of pointTargets()) {
+      const vg = vagueOf(t);
+      if (!vg) continue;
+      if (vg.raion) {
+        if (!raions.has(vg.raion)) raions.set(vg.raion, t);
+      } else if (project && kmPerUnit) {
+        const p = predict(t, Date.now());
+        const [x, y] = project(p.lat, p.lon);
+        const ring = svgEl('circle', { class: 'nep-area vague', cx: x.toFixed(2), cy: y.toFixed(2), r: (Math.min(vg.km, 60) / kmPerUnit).toFixed(2) });
+        ring.style.setProperty('--c', metaOf(t).color);
+        areaLayer.appendChild(ring);
+      }
+    }
+    for (const [shape, t] of raions) {
+      const path = svgEl('path', { class: 'nep-area vague', d: shape.d });
+      path.style.setProperty('--c', metaOf(t).color);
+      areaLayer.appendChild(path);
+    }
   }
 
   // ---------- targets close to the selected regions ----------
@@ -939,7 +1025,7 @@
       .sort((a, b) => a.near.km - b.near.km);
   }
 
-  // A 2-second banner for the targets that just came close. Observations (advisory) and old tracks do not alarm.
+  // A 5-second banner for the targets that just came close. Observations (advisory) and old tracks do not alarm.
   function alertEntered(entered, now) {
     for (const { t } of entered) freshUntil.set(t.id, now + 1500);
     const fresh = entered.filter(({ t }) => !t.advisory && t.status !== 'stale');
@@ -947,6 +1033,7 @@
     fresh.sort((a, b) => a.near.km - b.near.km);
     ipc.send('alert', {
       sound: opts.alertSound,
+      calm: opts.style === 'calm',
       volume,
       items: fresh.map(({ t, near }) => ({
         id: t.id,
@@ -954,6 +1041,7 @@
         title: nameText(t) + (t.count > 1 ? ` ×${t.count}` : ''),
         place: placeShort(t),
         km: Math.round(near.km),
+        vague: !!vagueOf(t), // "Кропивницький р-н": the distance is a rough one
         name: shortName(near.name),
         trend: near.trend || '',
         status: statusKey(near),
@@ -1080,7 +1168,10 @@
     const n = t.sourceCount || 0;
     const conf = CONFIDENCE[t.displayConfidence || t.confidenceLevel];
     let note = '';
+    const vg = vagueOf(t);
     if (t.areaOnly) note = 'Лише область';
+    else if (vg && vg.raion) note = 'Десь у районі';
+    else if (vg) note = `Приблизно, ±${Math.round(vg.km)} км`;
     else if (t.destination) note = 'Розрахункова позиція';
     else if (p.flying && p.km > 0.5) note = `За курсом +${Math.round(p.km)} км`;
     else if (t.advisory) note = 'Спостереження';
@@ -1127,13 +1218,27 @@
   // Where and how it was mentioned: one line per channel — the channel (a button into Telegram), the time and
   // the very line it wrote; without any post, the NEPTUN summary.
   function detailsFoot(t) {
-    const rows = sourcesOf(t).map((x) => {
-      const url = channelUrl(x.channel);
-      const chan = url
-        ? `<a class="h-b src ui" href="${url}" target="_blank">${esc(x.channel)}<small>${hhmm(x.at)}</small></a>`
-        : `<span class="h-b src">${esc(x.channel)}<small>${hhmm(x.at)}</small></span>`;
-      return `<div class="h-men">${chan}<span title="${esc(x.text)}">«${esc(x.text)}»</span></div>`;
-    });
+    const chip = (channel, at) => {
+      const url = channelUrl(channel);
+      return url
+        ? `<a class="h-b src ui" href="${url}" target="_blank">${esc(channel)}<small>${hhmm(at)}</small></a>`
+        : `<span class="h-b src">${esc(channel)}<small>${hhmm(at)}</small></span>`;
+    };
+    // The way your channel followed it ("… → Високі Байраки → Кандаурове") stands for that channel's line.
+    const r = intel && intel.routes ? intel.routeOf(t) : null;
+    const route = r && r.points.length >= 2 ? r : null;
+    const rows = [];
+    if (route) {
+      const names = route.points.slice(-4).map((p) => esc(p.name));
+      const last = route.points[route.points.length - 1].name;
+      const path = `${route.points.length > 4 ? '… → ' : ''}${names.join(' → ')}${route.to && route.to !== last ? ` → <i>${esc(route.to)}</i>` : ''}`;
+      const title = route.points.map((p) => `${hhmm(p.at)} ${p.name}`).join('\n');
+      rows.push(`<div class="h-men route">${chip(route.channel, route.at)}<span title="${esc(title)}">${path}</span></div>`);
+    }
+    for (const x of sourcesOf(t)) {
+      if (route && x.channel.toLowerCase() === route.channel.toLowerCase()) continue;
+      rows.push(`<div class="h-men">${chip(x.channel, x.at)}<span title="${esc(x.text)}">«${esc(x.text)}»</span></div>`);
+    }
     if (!rows.length) rows.push(`<div class="h-men"><span class="h-b src">NEPTUN</span><span>зведення моніторингових каналів${t.locality ? ` · ${esc(t.locality)}` : ''}</span></div>`);
     return `<div class="h-foot men">${rows.slice(0, 2).join('')}</div>`;
   }
@@ -1565,6 +1670,7 @@
     home = h && Number.isFinite(h.lat) && Number.isFinite(h.lon) && project ? { lat: h.lat, lon: h.lon, ...xy(h.lat, h.lon) } : null;
     const zoomBar = $('nep-zoom');
     if (zoomBar) zoomBar.classList.toggle('has-mine', hasBase());
+    if (intel && intel.routes) intel.routes.defaultHome = routesHome();
     quiet = prev.markers; // a settings change re-baselines the close targets without a banner
     if (opts.markers && !prev.markers) {
       client.start();
@@ -1574,7 +1680,7 @@
       client.stop();
       if (intel) intel.stop();
     }
-    if (intel) intel.trusted = new Set((opts.channels || []).map((c) => '@' + c));
+    if (intel) intel.trusted = new Set((opts.channels || []).map((c) => '@' + String(c).toLowerCase()));
     if (ipc) ipc.send('tg-channels', opts.markers ? opts.channels : []);
     renderAll();
   }
@@ -1598,7 +1704,14 @@
     project = Geo.mapProjector(proj);
     projDef = proj;
     kmPerUnit = 1 / (proj.k * 1000);
+    // Place names of the channel posts -> map points (routes.js), once the basemap has its gazetteer.
+    const places = () => intel && window.NeptunPlaces && window.NeptunPlaces.places && intel.setPlaces(window.NeptunPlaces.places, project, kmPerUnit, routesHome());
+    places();
+    window.addEventListener('nep-places', places);
     for (const r of map.raions) shapeIndex.set(r.uid, { uid: r.uid, name: r.name, d: r.d });
+    if (window.NeptunIntel && window.NeptunIntel.placeKey) {
+      for (const sh of shapeIndex.values()) if (/район$/.test(sh.name)) raionByKey.set(window.NeptunIntel.placeKey(sh.name.replace(/\s*район$/, '')), sh);
+    }
     for (const o of map.oblasts) oblastIndex.set(normOblast(o.name), o);
     land = map.raions.map((r) => {
       const rr = Geo.pathRings(r.d);

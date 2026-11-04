@@ -1,6 +1,6 @@
 // Main-process part of the targets layer. main.js needs only:  require('./neptun/main');
 // - the "target near your regions" banner: its own small always-on-top window in the top-right
-//   corner (the air-raid banner is at the top centre). It shows for 2 s and lets clicks through;
+//   corner (the air-raid banner is at the top centre). It shows for 5 s and lets clicks through;
 // - links in app windows open in the default browser, never inside an app window.
 // The widget and the settings page talk to it over "neptun:*" IPC channels (window.bridge.neptun).
 const { app, shell, BrowserWindow, ipcMain, screen } = require('electron');
@@ -85,8 +85,8 @@ ipcMain.on('neptun:alert-done', hide);
 // ---------- your own Telegram channels ----------
 // Public channels have a web preview, https://t.me/s/<channel>: the latest posts, no login, no bot. The widget
 // sends the list (settings.neptun.channels) over "neptun:tg-channels"; the posts go back over "neptun:tg-posts"
-// as { channel: '@name', date, text } — the same shape as the posts of the NEPTUN feed, so they take part in
-// telling a jet Shahed, in the sources shown on hover and in the explosions.
+// as { channel: '@name', id, date, text, reply: { id, text } | null } — the shape of the posts of the NEPTUN feed
+// plus the post number and the post it answers, so routes.js can follow a target from reply to reply.
 const TG_EVERY = 45000;
 const TG_NAME = /^[A-Za-z0-9_]{4,32}$/;
 let tgSender = null;
@@ -99,21 +99,25 @@ const decode = (s) =>
     .replace(/<[^>]+>/g, '')
     .replace(/&#(\d+);/g, (_m, n) => String.fromCodePoint(Number(n)))
     .replace(/&#x([0-9a-f]+);/gi, (_m, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&nbsp;/g, ' ')
     .replace(/&quot;/g, '"')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&')
     .trim();
 
-// Posts of the t.me/s page: a post's own text is the block marked js-message_text (a quoted reply is another one).
+// Posts of the t.me/s page: a post's own text is the block marked js-message_text; the post it answers is
+// quoted in tgme_widget_message_reply (its link has the number, js-message_reply_text the text).
 function parseTg(html, name) {
   const out = [];
   for (const block of html.split('tgme_widget_message_wrap').slice(1)) {
+    const id = /data-post="[^"/]+\/(\d+)"/.exec(block);
     const text = /class="tgme_widget_message_text js-message_text"[^>]*>([\s\S]*?)<\/div>/.exec(block);
     const time = /<time[^>]*datetime="([^"]+)"/.exec(block);
     if (!text || !time) continue;
+    const reply = /tgme_widget_message_reply[^"]*" href="[^"]*\/(\d+)"[\s\S]*?js-message_reply_text"[^>]*>([\s\S]*?)<\/div>/.exec(block);
     const t = decode(text[1]);
-    if (t) out.push({ channel: '@' + name, date: time[1], text: t });
+    if (t) out.push({ channel: '@' + name, id: id ? Number(id[1]) : null, date: time[1], text: t, reply: reply ? { id: Number(reply[1]), text: decode(reply[2]) } : null });
   }
   return out;
 }

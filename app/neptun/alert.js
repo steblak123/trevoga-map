@@ -1,7 +1,8 @@
 // Banner "targets near your regions" (window created by neptun/main.js): the targets that just came
-// close, as HUD entries, for 2 s; then it fades out by itself. The full list stays in the widget.
+// close, as HUD entries, for 5 s; then it fades out by itself. The full list stays in the widget.
+// p.calm: the "Акуратний" look of the settings (no glow).
 const bar = document.getElementById('bar');
-const SHOW_MS = 2000;
+const SHOW_MS = 5000;
 const ROWS = 3;
 const STATUS = { appr: 'Наближається', pass: 'Проліт', away: 'Віддаляється', hit: 'Удар', unk: 'Невідомо' };
 let audio = null;
@@ -41,7 +42,7 @@ function entry(i) {
   const T = window.NeptunTypes;
   const meta = T.typeMeta(i.type);
   const st = STATUS[i.status] ? i.status : 'unk';
-  const dist = i.km < 1 ? `${DIST}над районом` : `${DIST}${i.km}<small>км</small>`;
+  const dist = i.vague ? `${DIST}≈${i.km}<small>км</small>` : i.km < 1 ? `${DIST}над районом` : `${DIST}${i.km}<small>км</small>`;
   const badges =
     (i.place ? `<span class="h-b place">${PIN}${esc(i.place)}</span>` : '') +
     `<span class="h-b dist">${dist}</span>` +
@@ -65,6 +66,7 @@ function render(p) {
   const n = items.length;
   bar.querySelector('.h-title').textContent = `${n} ${plural(n, ['ЦІЛЬ', 'ЦІЛІ', 'ЦІЛЕЙ'])} ПОРУЧ`;
   bar.classList.toggle('r2', items.some((i) => i.risk === 2));
+  bar.classList.toggle('calm', !!p.calm);
   const shown = items.slice(0, n > ROWS ? ROWS - 1 : ROWS);
   document.getElementById('list').innerHTML =
     shown.map(entry).join('') + (n > shown.length ? `<div class="h-foot"><span class="h-b none">+${n - shown.length}</span></div>` : '');

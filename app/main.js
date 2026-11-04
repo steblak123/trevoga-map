@@ -530,7 +530,7 @@ function ensureOverlay() {
     },
   });
   overlay.setAlwaysOnTop(true, 'screen-saver');
-  // The banner shows for 2 s and lets every click through, so it never gets in the way.
+  // The banner shows for 5 s and lets every click through, so it never gets in the way.
   overlay.setIgnoreMouseEvents(true);
   overlay.loadFile(path.join(__dirname, 'overlay.html'));
   overlay.on('closed', () => (overlay = null));
@@ -545,7 +545,8 @@ function showOverlay(payload) {
   const win = ensureOverlay();
   overlayState = payload;
   // The page reports the banner size back ('overlay-size'); the window is shown at that size.
-  const send = () => win.webContents.send('overlay', { ...payload, sound: soundOn, volume: settings.volume, visible });
+  const calm = !!(settings.neptun && settings.neptun.style === 'calm'); // "Акуратний" look of the targets layer
+  const send = () => win.webContents.send('overlay', { ...payload, sound: soundOn, volume: settings.volume, visible, calm });
   if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send);
   else send();
 }
@@ -653,12 +654,12 @@ function resetPosition() {
 function testAlert() {
   const uid = settings.regions[0] || 31;
   showOverlay({ kind: 'alert', test: true, items: [{ uid, name: regionName(uid), status: 'A', since: Date.now() - 5 * 60000, level: 'red' }], sound: true });
-  // The alert banner hides itself after 2 s; then the all-clear one follows (unless a real banner is up).
+  // The alert banner hides itself after 5 s; then the all-clear one follows (unless a real banner is up).
   setTimeout(() => {
     if (overlayState && !overlayState.test) return;
     const end = Date.now();
     showOverlay({ kind: 'clear', test: true, items: [{ uid, name: regionName(uid), start: end - 5 * 60000, end }], sound: true });
-  }, 3500);
+  }, 6500);
 }
 
 // ---------- IPC ----------

@@ -1,6 +1,6 @@
 const bar = document.getElementById('bar');
 const R = window.Regions;
-const SHOW_MS = 2000; // the banner fades out by itself after this
+const SHOW_MS = 5000; // the banner fades out by itself after this
 let hideTimer = null;
 let audio = null;
 
@@ -67,7 +67,7 @@ const badge = (cls, html) => `<span class="h-b ${cls}">${html}</span>`;
 
 function render(p) {
   clearTimeout(hideTimer);
-  bar.className = 'h-pan ' + p.kind;
+  bar.className = 'h-pan ' + p.kind + (p.calm ? ' calm' : '');
   bar.querySelector('.icon').innerHTML = p.kind === 'alert' ? ICON_ALERT : ICON_CLEAR;
   const list = document.getElementById('list');
   const hint = document.getElementById('hint');

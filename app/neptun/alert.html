@@ -8,7 +8,7 @@
   <style>
     html, body { margin: 0; background: transparent; overflow: hidden; user-select: none; }
     body { padding: 10px; }
-    /* Shown for 2 s, semi-transparent and click-through, so it never gets in the way. */
+    /* Shown for 5 s, semi-transparent and click-through, so it never gets in the way. */
     #bar {
       --h-glass: rgba(9, 15, 24, 0.62);
       --hc: var(--h-orange);
@@ -25,6 +25,16 @@
     #bar .h-head { background: linear-gradient(90deg, color-mix(in srgb, var(--hc) 30%, transparent), transparent 80%); }
     #bar .h-head .h-ico { color: var(--hc); width: 15px; height: 15px; }
     #bar .h-title { font-size: 13px; letter-spacing: 0.06em; color: #fff; text-shadow: 0 0 10px color-mix(in srgb, var(--hc) 70%, transparent); }
+    /* "Акуратний" look (settings): no glow, no pulse, quieter colours. */
+    #bar.calm { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--hc) 70%, #9aa7b8), 0 6px 18px rgba(0, 0, 0, 0.3); --h-glass: rgba(14, 19, 27, 0.8); }
+    #bar.calm::before { display: none; }
+    #bar.calm .h-head { background: none; }
+    #bar.calm .h-title { text-shadow: none; font-weight: 600; letter-spacing: 0.03em; }
+    #bar.calm .h-head .h-ico { color: color-mix(in srgb, var(--hc) 70%, #c9d3de); }
+    #bar.calm .h-b { box-shadow: none; text-shadow: none; }
+    #bar.calm .h-ent { border-left-color: transparent; }
+    #bar.calm .h-ent.r2 { border-left: 2px solid rgba(255, 77, 87, 0.75); }
+    #bar.calm .h-ent-ico { background: transparent; border-color: rgba(255, 255, 255, 0.1); color: color-mix(in srgb, var(--c) 55%, #9aa7b8); box-shadow: none; }
     .h-ent { cursor: default; }
     .h-ent:hover { transform: none; background: transparent; }
     @keyframes drop { from { transform: translateY(-14px); opacity: 0; } }

@@ -4,11 +4,18 @@
 //   that post speaks of an ordinary Shahed;
 // - sources: which channels wrote about the track's place lately, with the time and the line.
 // The feed is polled every 30 s (the API allows every 5 s) and kept for 45 minutes.
+// Your own Telegram channels (main.js reads them) come in too, with the post number and the post each one
+// answers: routes.js follows their targets from post to post ("Реактивний на Новий Стародуб" -> "→Нова Прага")
+// and a track then takes the posts of the channel targets near it, not only those that name its place.
+// A post that comes both from the feed and from Telegram (the same channel and text) counts once.
 (function (root) {
   const URL = 'https://neptun.in.ua/api/v1/messages';
   const EVERY = 30000;
   const KEEP_MS = 45 * 60000;
   const BEFORE_MS = 20 * 60000; // a post may name a place up to this long before the track was last updated
+  const SAME_MS = 3 * 60000; // the same text of the same channel within this time is the same post
+  const NEAR_KM = 15; // a channel target this close to a track is that track (where it flies to: 25 km)
+  const NEAR_EST_KM = 25;
   const JET = /реактивн/i;
   const NOT_JET = /не\s+реактивн/i;
   // What a line is about, checked in this order; a line naming none continues the line before it.
@@ -58,7 +65,12 @@
       this.index = new Map(); // place key -> [{ at, mode, channel, text }] newest first
       this.timer = null;
       this.listeners = new Set();
-      this.trusted = new Set(); // your own channels ('@name'): one of them is enough for a jet
+      this.trusted = new Set(); // your own channels ('@name', lower case): one of them is enough for a jet
+      this.seen = new Map(); // channel|text -> times: the same post from the feed and from Telegram
+      this.routes = null; // routes.js over the basemap gazetteer (setPlaces)
+      this.nearCache = new Map(); // track id -> its near() for this version
+      this.project = null; // (lat, lon) -> [x, y] in map units, set by widget.js
+      this.kmPerUnit = 1;
       this.version = 0;
     }
 
@@ -97,6 +109,11 @@
         const key = `${m.channel}|${m.date}|${m.text}`;
         if (this.posts.has(key)) continue;
         const at = Date.parse(m.date) || now;
+        const same = `${String(m.channel || '').trim().toLowerCase()}|${norm(m.text).replace(/[^a-zа-я0-9]+/g, '')}`;
+        const times = this.seen.get(same) || [];
+        if (times.some((x) => Math.abs(x - at) <= SAME_MS)) continue; // came already from the other source
+        times.push(at);
+        this.seen.set(same, times);
         let mode = null;
         const lines = [];
         for (const raw of m.text.split(/\n+/)) {
@@ -118,6 +135,13 @@
         added = true;
       }
       for (const [key, p] of this.posts) if (now - p.at > KEEP_MS) this.posts.delete(key);
+      if (this.seen.size > 2000 || added) {
+        for (const [k, times] of this.seen) {
+          const keep = times.filter((x) => now - x <= KEEP_MS);
+          if (keep.length) this.seen.set(k, keep);
+          else this.seen.delete(k);
+        }
+      }
       if (added) this.reindex();
       return added;
     }
@@ -136,8 +160,58 @@
     }
 
     // Posts from elsewhere (your own Telegram channels, read by main.js).
-    addExternal(posts) {
-      if (this.add(posts)) this.changed();
+    addExternal(posts, now = Date.now()) {
+      const list = (posts || []).filter((p) => p && typeof p.text === 'string');
+      this.early = this.routes ? null : list; // the gazetteer may come after the first posts
+      const routed = this.routes ? this.routes.add(list.filter((p) => p.id != null), now).length : 0;
+      if (this.add(list, now) || routed) this.changed();
+    }
+
+    // The gazetteer of the basemap (basemap/places.js): place names -> map points, for routes.js.
+    setPlaces(data, project, kmPerUnit, home) {
+      const Routes = root.NeptunRoutes || (typeof require === 'function' ? require('./routes').Routes : null);
+      if (project) this.project = project;
+      if (kmPerUnit) this.kmPerUnit = kmPerUnit;
+      if (!Routes || !data) return;
+      if (!this.routes) this.routes = new Routes(data);
+      this.routes.kmPerUnit = this.kmPerUnit;
+      if (home !== undefined) this.routes.defaultHome = home;
+      if (this.early) this.addExternal(this.early);
+    }
+
+    // Sightings of the channels' targets near the track ([lat, lon] of it and of its trail), in the window
+    // of mentions(): [{ at, mode, channel, text, route }], newest first.
+    near(t) {
+      if (!this.routes || !this.project || !t || t.areaOnly || !Number.isFinite(t.lat)) return [];
+      const ck = `${this.version}|${t.updatedAt}|${t.lat},${t.lon}`;
+      const c = this.nearCache.get(t.id);
+      if (c && c.k === ck) return c.list;
+      const list = this.nearNow(t);
+      if (this.nearCache.size > 3000) this.nearCache.clear();
+      this.nearCache.set(t.id, { k: ck, list });
+      return list;
+    }
+
+    nearNow(t) {
+      const pts = [[t.lat, t.lon], ...(Array.isArray(t.trail) ? t.trail : []).filter((q) => q && Number.isFinite(q.lat)).map((q) => [q.lat, q.lon])].map(([la, lo]) => this.project(la, lo));
+      const since = (Date.parse(t.updatedAt || t.confirmedAt) || Date.now()) - BEFORE_MS;
+      const out = [];
+      for (const s of this.routes.sightings) {
+        if (s.at < since || !s.pos) continue;
+        const lim = (s.pos.est ? NEAR_EST_KM : NEAR_KM) / this.kmPerUnit;
+        if (!pts.some(([x, y]) => Math.hypot(x - s.pos.x, y - s.pos.y) <= lim)) continue;
+        out.push({ at: s.at, mode: s.kind || null, channel: s.channel, text: s.text, route: s });
+      }
+      return out.sort((a, b) => b.at - a.at);
+    }
+
+    // The channel route of a track: the latest sighting near it that has a route, as
+    // { channel, at, heading, points: [{ name, at }] } (oldest first), or null.
+    routeOf(t, maxAgeMs = 12 * 60000) {
+      const s = this.near(t).find((x) => x.route.track && Date.now() - x.at <= maxAgeMs);
+      if (!s) return null;
+      const points = this.routes.route(s.route.track).filter((p, i, a) => !i || p.name !== a[i - 1].name);
+      return { channel: s.channel, at: s.at, heading: s.route.heading, kind: s.route.kind, points, to: s.route.to };
     }
 
     changed() {
@@ -146,12 +220,16 @@
     }
 
     // Posts that name the track's place, newest first, from BEFORE_MS before its last update on.
+    // And, of your own channels, the posts about targets near it (near()).
     mentions(t) {
-      if (!t || !t.locality || t.locality === t.region) return [];
-      const list = this.index.get(placeKey(t.locality));
-      if (!list) return [];
+      if (!t) return [];
       const since = (Date.parse(t.updatedAt || t.confirmedAt) || Date.now()) - BEFORE_MS;
-      return list.filter((x) => x.at >= since);
+      const named = t.locality && t.locality !== t.region ? (this.index.get(placeKey(t.locality)) || []).filter((x) => x.at >= since) : [];
+      const geo = this.near(t);
+      if (!geo.length) return named;
+      const have = new Set(named.map((x) => `${x.channel.toLowerCase()}|${x.at}|${x.text}`));
+      const more = geo.filter((x) => !have.has(`${x.channel.toLowerCase()}|${x.at}|${x.text}`));
+      return [...named, ...more].sort((a, b) => b.at - a.at);
     }
 
     // Jet or plain from the Shahed posts naming the track's place: { mode, at, channel } or null.
@@ -162,7 +240,7 @@
       const list = this.mentions(t).filter((x) => x.mode === 'jet' || x.mode === 'plain');
       const jets = list.filter((x) => x.mode === 'jet');
       const channels = new Set(jets.map((x) => x.channel));
-      const official = jets.find((x) => OFFICIAL.test(x.channel) || this.trusted.has(x.channel));
+      const official = jets.find((x) => OFFICIAL.test(x.channel) || this.trusted.has(String(x.channel).toLowerCase()));
       if (official || channels.size >= 2) {
         const x = official || jets[0];
         return { mode: 'jet', at: x.at, channel: x.channel };

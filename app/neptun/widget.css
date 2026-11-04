@@ -113,6 +113,17 @@
   animation: nep-march 1.4s linear infinite;
 }
 @keyframes nep-march { to { stroke-dashoffset: -24; } }
+/* raion-level report: where the target may be, quietly */
+#nep-area .nep-area.vague {
+  fill: color-mix(in srgb, var(--c) 5%, transparent);
+  stroke: color-mix(in srgb, var(--c) 50%, transparent);
+  stroke-width: 1.1px;
+  stroke-dasharray: 4 4;
+  animation: none;
+}
+.nep-marker.vague { opacity: 0.5; }
+.nep-marker.vague .halo { stroke-dasharray: 1.6 2.2; }
+.nep-marker.vague:hover, .nep-marker.vague.sel { opacity: 1; }
 
 /* region labels keep their size when the map is zoomed (zoom.js sets --nep-zoom); they never overlap
    (widget.js moves or hides them) and fade under a marker */
@@ -568,3 +579,5 @@ body.nep-placing #map, body.nep-placing .nep-marker { cursor: crosshair; }
 .nep-targets .h-foot.men > * { flex: none; }
 .nep-targets .h-foot.men > .h-men { flex: 0 1 auto; }
 .nep-targets .h-foot.men > .h-b.note { align-self: flex-start; }
+.h-men.route > span:last-child { color: #e6edf5; }
+.h-men.route > span:last-child i { font-style: normal; color: #9fb3c8; }

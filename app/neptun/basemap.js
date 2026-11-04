@@ -398,10 +398,14 @@
     window.bridge.onSettings(apply);
     const data = await loadScript('places.js', 'NeptunBasemapPlaces');
     if (data) buildLabels(data);
+    if (data) {
+      api.places = data; // the gazetteer, for the channel routes (widget.js -> intel.js)
+      window.dispatchEvent(new CustomEvent('nep-places'));
+    }
     schedule();
   }
 
-  const api = { setMode, find: () => null, get mode() { return mode; } };
+  const api = { setMode, find: () => null, places: null, get mode() { return mode; } };
   window.NeptunBasemap = api;
   window.NeptunPlaces = api;
   init();

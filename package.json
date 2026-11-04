@@ -10,6 +10,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
+    "test": "node --test",
     "icon": "electron build/make-icon.js",
     "dist": "node build/prepare-token.js && electron-builder --win nsis",
     "release": "electron-builder --win nsis --x64 --publish always",
