@@ -109,11 +109,11 @@
       if (ageMin > 0) {
         const km = Math.min(meta.maxKm, (v.speedKmh * Math.min(ageMin, meta.horizonMin)) / 60);
         const [lat, lon] = Geo.dest(t.lat, t.lon, bearing, km);
-        return { lat, lon, heading: bearing, km, flying: ageMin <= meta.horizonMin && km > 0.05, byPosts: newer };
+        return { lat, lon, heading: bearing, km, flying: ageMin <= meta.horizonMin && km > 0.05, byPosts: newer, courseBy: newer ? c.by : null };
       }
-      return { lat: t.lat, lon: t.lon, heading: bearing, km: 0, flying: true, byPosts: newer };
+      return { lat: t.lat, lon: t.lon, heading: bearing, km: 0, flying: true, byPosts: newer, courseBy: newer ? c.by : null };
     }
-    if (c && (own == null || newer)) return { lat: t.lat, lon: t.lon, heading: c.heading, km: 0, flying: false, byPosts: true };
+    if (c && (own == null || newer)) return { lat: t.lat, lon: t.lon, heading: c.heading, km: 0, flying: false, byPosts: true, courseBy: c.by || 'posts' };
     return { lat: t.lat, lon: t.lon, heading: own, km: 0, flying: false };
   }
 

@@ -30,7 +30,14 @@
   ];
   const ALERT = /повітряна тривога|відбій|рівень знижено|рівень підвищено|тривог[уаи] (?:триває|дали|зняли)|загроза (?:по|балістик|застосування)|^[+]\s*\S+\s+(?:рн|р-н|район)/i;
   const CLEAR = /(?:область|кіровоградщин\S*|в нас|наразі|поки)\s*(?:майже\s*)?чисто|чисто\s*(?:в|на)\s+(?:області|кіровоградщин)/i;
-  const GONE = /не\s*спостеріга|(?:^|\s)зник|збили|збито|мінус|впав|недолетів|вилетів|вилітає з област|виходить з обл|вийшов з обл|^[—–-]+$/i;
+  // A target the channel no longer sees: 'lost' ("Зник", "Не спостерігається": it may fly low, it stays a few
+  // minutes, faint), 'down' ("Збили", "Мінус", "Впав") or 'left' ("Вилетів з області"): gone at once.
+  const DOWN = /збили|збито|(?:^|\s)мінус(?![а-яіїєґ])|впав|впала|недолетів|знищен|приземлил/i;
+  const LEFT = /вилетів|вилітає з област|виходить з обл|вийшов з обл/i;
+  const LOST = /не\s*спостеріга|(?:^|\s)зник|зникл|не\s*фікс|^[—–-]+$/i;
+  const GONE = new RegExp(`${DOWN.source}|${LEFT.source}|${LOST.source}`, 'i');
+  const fateOf = (line) => (DOWN.test(line) ? 'down' : LEFT.test(line) ? 'left' : LOST.test(line) ? 'lost' : null);
+  const LOST_MS = 5 * 60000; // a lost target stays this long
   const NEW = /(?:^|\s)(?:ще|і ще|за ним|другий|другого|третій|ще один|наступн|новий|нова ціль|нові)(?![а-яіїєґ])/i;
   const ORDINAL = /^\s*(\d)\s*-?\s*(?:й|ий|ій|га|гий|ге)(?![а-яіїєґ])|^\s*(перший|другий|третій)/i;
   const COUNT = /^\s*(?:(?:і\s+)?ще\s+|за\s+ним\s+ще\s+|всього\s+)?(\d{1,2})(?![\d:.,/-])|(?:^|[\s(])(\d{1,2})\s*(?:х|x|шт)(?![а-яіїєґ])/i;
@@ -378,11 +385,16 @@
           continue;
         }
         if (CLEAR.test(line) && !/кроп|місто/i.test(line)) {
-          for (const t of st.tracks.values()) if (t.updated <= at) t.gone = true; // not those named after it
+          for (const t of st.tracks.values()) {
+            if (t.updated > at) continue; // not those named after it
+            t.gone = true;
+            t.fate = 'left';
+          }
           continue;
         }
         const groups = placesIn(line, this.gaz);
         const gone = GONE.test(line);
+        const fate = gone ? fateOf(line) : null;
         if (!groups.length && !gone) continue;
         if (SAFE.test(line) && groups.length <= 1 && !gone) continue; // "Кроп без загроз ✅"
         if (/^\s*(?:якщо|може|можливо|ймовірно|очікуємо|будуть|буде)\s/i.test(line) && !thread.length) continue; // what may come
@@ -486,11 +498,13 @@
           track: track.id,
           kind: track.kind,
           count: track.count,
-          pos: pos ? { x: pos.x, y: pos.y, name: pos.name, est: !!pos.est } : null,
+          // a "Не спостерігається" without a place: where it was last
+          pos: pos ? { x: pos.x, y: pos.y, name: pos.name, est: !!pos.est } : gone && track.last ? { x: track.last.x, y: track.last.y, name: track.last.name, est: true, last: true } : null,
           from: fromG ? fromG.names.join('/') : prevName ? prevName.name : null,
           to: toG ? toG.names.join('/') : null,
           heading,
           gone,
+          fate,
           text: line.length > 120 ? line.slice(0, 119) + '…' : line,
         };
         if (pos) {
@@ -498,8 +512,14 @@
           track.points.push(track.last);
           if (!pos.est && pos.rank <= 6) this.learnHome(st, pos);
         }
-        if (gone) track.gone = true;
-        else if (pos) track.gone = false;
+        if (gone) {
+          track.gone = true;
+          track.fate = fate;
+          track.goneAt = at;
+        } else if (pos) {
+          track.gone = false;
+          track.fate = null;
+        }
         track.updated = at;
         if (track.kind) {
           st.kind = track.kind;
@@ -555,17 +575,30 @@
       return t;
     }
 
-    // The recent sightings of live tracks: [{ ...sighting }], the latest one per track.
+    // The recent sightings of live tracks: [{ ...sighting }], the latest one per track. A lost one ("Зник")
+    // stays LOST_MS, with lost: true.
     live(now = Date.now(), maxAge = TRACK_MS) {
       const last = new Map();
       for (const s of this.sightings) if (now - s.at <= maxAge && s.pos) last.set(s.track, s);
       const out = [];
       for (const s of last.values()) {
-        const st = this.channels.get(s.channel);
-        const t = st && st.tracks.get(s.track);
-        if (t && !t.gone) out.push(s);
+        const t = this.track(s.channel, s.track);
+        if (!t) continue;
+        if (!t.gone) out.push(s);
+        else if (t.fate === 'lost' && now - t.goneAt <= LOST_MS) out.push({ ...s, lost: true });
       }
       return out;
+    }
+
+    track(channel, id) {
+      const st = this.channels.get(channel);
+      return st ? st.tracks.get(id) || null : null;
+    }
+
+    // The latest sighting of a track.
+    lastOf(id) {
+      for (let i = this.sightings.length - 1; i >= 0; i--) if (this.sightings[i].track === id) return this.sightings[i];
+      return null;
     }
 
     // The route of a track so far: [{ name, at }], oldest first.

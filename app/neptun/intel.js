@@ -216,6 +216,20 @@
       return out.sort((a, b) => b.at - a.at);
     }
 
+    // What your channel last said of the target near this track, if it is newer than NEPTUN's update and the
+    // channel has written nothing of it since: { fate: 'down' | 'lost' | 'left', channel, at, text } or null.
+    fateOf(t) {
+      if (!this.routes) return null;
+      const since = Date.parse(t.updatedAt || t.confirmedAt) || 0;
+      for (const x of this.near(t)) {
+        const s = x.route;
+        if (!s.fate || s.at <= since) continue;
+        if (this.routes.lastOf(s.track) !== s) continue;
+        return { fate: s.fate, channel: s.channel, at: s.at, text: s.text };
+      }
+      return null;
+    }
+
     // The channel route of a track: the latest sighting near it that has a route, as
     // { channel, at, heading, points: [{ name, at }] } (oldest first), or null.
     routeOf(t, maxAgeMs = 12 * 60000) {

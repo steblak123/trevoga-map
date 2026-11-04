@@ -68,9 +68,12 @@
   // Tracks take the course of your channels' route near them (10 min fresh): when NEPTUN has none, or when the post is newer.
   if (window.NeptunTypes.setCourse) {
     window.NeptunTypes.setCourse((t) => {
-      if (!intel || !intel.routes || vagueOf(t)) return null; // a raion-level point is too rough to match
-      const r = intel.routeOf(t, 10 * 60000);
-      return r && r.heading != null && r.points.length >= 2 ? { heading: r.heading, at: r.at } : null;
+      if (vagueOf(t)) return null; // a raion-level point is too rough to match
+      const r = intel && intel.routes ? intel.routeOf(t, 10 * 60000) : null;
+      if (r && r.heading != null && r.points.length >= 2) return { heading: r.heading, at: r.at, by: 'posts' };
+      if (t.tg || t.heading != null) return null;
+      const h = courseByMoves(t);
+      return h == null ? null : { heading: h, at: 0, by: 'moves' }; // never over NEPTUN's own course
     });
   }
 
@@ -376,6 +379,7 @@
         uncertaintyKm: s.pos.est ? 10 : 5,
         explanationShort: `${s.channel}: ${s.text}`,
         tg: { channel: s.channel, text: s.text, at: s.at },
+        lost: s.lost ? s.at : 0, // "Зник": stays a few minutes, faint
       });
     }
     tgCache = { k, list };
@@ -391,6 +395,51 @@
     if (intel) intel.setFast(on);
     if (ipc) ipc.send('tg-fast', on);
   }
+  // What your channel last said of a target: 'down' ("Збили", "Мінус": faint, no banner), 'lost' ("Зник",
+  // "Не спостерігається": it may fly low; blinks slowly), 'left' (out of the oblast), or null.
+  function fateFor(t) {
+    if (t.tg) return t.lost ? { fate: 'lost', channel: t.tg.channel, at: t.lost } : null;
+    return intel && intel.routes ? intel.fateOf(t) : null;
+  }
+  const FATE_NOTE = { down: 'за каналом: збито', lost: 'втрачено', left: 'вилетів з області' };
+  const FATE_SHORT = { down: 'Збито', lost: 'Втрачено', left: 'Вилетів' };
+  const fateBadge = (t) => {
+    const f = fateFor(t);
+    return f ? `<span class="h-b h-st ${f.fate === 'lost' ? 'unk' : 'away'}" title="${esc(`${f.channel} ${hhmm(f.at)}: ${f.text || ''}`)}">${FATE_SHORT[f.fate]}</span>` : '';
+  };
+
+  // Where NEPTUN's tracks were at their updates (and their trail): a track NEPTUN gives no course moved
+  // from there to here, so that is its course, an estimate.
+  const moves = new Map(); // id -> [{ lat, lon, at }] oldest first
+  function recordMoves(now) {
+    for (const t of client.list()) {
+      if (t.areaOnly || !Number.isFinite(t.lat)) continue;
+      const at = Date.parse(t.updatedAt || t.confirmedAt) || now;
+      const list = moves.get(t.id) || [];
+      const last = list[list.length - 1];
+      if (!last || (last.at !== at && (last.lat !== t.lat || last.lon !== t.lon))) list.push({ lat: t.lat, lon: t.lon, at });
+      while (list.length > 10 || (list.length && now - list[0].at > 40 * 60000)) list.shift();
+      moves.set(t.id, list);
+    }
+    if (moves.size > 3000) for (const id of moves.keys()) if (!client.threats.has(id)) moves.delete(id);
+  }
+  const MAX_KMH = { uav: 260, jet: 900, recon: 220, fpv: 150, kab: 900, missile: 1100, ballistic: 4000, mig31k: 2500, unknown: 900 };
+  function courseByMoves(t) {
+    const pts = [...(Array.isArray(t.trail) ? t.trail : []).map((q) => ({ lat: q.lat, lon: q.lon, at: Date.parse(q.t) || 0 })), ...(moves.get(t.id) || [])]
+      .filter((q) => Number.isFinite(q.lat) && q.at)
+      .sort((a, b) => a.at - b.at);
+    const end = { lat: t.lat, lon: t.lon, at: Date.parse(t.updatedAt || t.confirmedAt) || 0 };
+    for (const q of pts) {
+      if (end.at - q.at > 30 * 60000 || end.at - q.at < 60000) continue;
+      const km = Geo.distanceKm(q.lat, q.lon, end.lat, end.lon);
+      if (km < 3) continue;
+      const kmh = km / ((end.at - q.at) / 3600000);
+      if (kmh > (MAX_KMH[kindOf(t)] || 900)) continue; // a jump of reports, not a flight
+      return Geo.bearing(q.lat, q.lon, end.lat, end.lon);
+    }
+    return null;
+  }
+
   const alertInMine = () => !!(R && alertState.iot && mine.some((s) => R.statusOf(alertState.iot, s.uid) !== 'N'));
   const pointTargets = () => targets().filter((t) => !t.areaOnly);
   const courseless = (t, now) => SHAHEDS.has(kindOf(t)) && predict(t, now).heading == null;
@@ -567,7 +616,7 @@
       : placeBadge(placeShort(t)) + distBadge(near) + when + courseBadge(p, originOf(t, now)) + etaBadge(etaMin(t, near));
     return (
       `<button class="${cls}" data-id="${esc(t.id)}" style="--c:${metaOf(t).color}">${typeChip(kindOf(t))}` +
-      `<span class="h-ent-name">${nameOf(t)}<small>${esc(areaText(t))}</small></span>${statusBadge(statusKey(near))}<span class="h-ent-badges">${badges}</span></button>`
+      `<span class="h-ent-name">${nameOf(t)}<small>${esc(areaText(t))}</small></span>${fateBadge(t) || statusBadge(statusKey(near))}<span class="h-ent-badges">${badges}</span></button>`
     );
   }
 
@@ -685,6 +734,8 @@
       adv: members.every((i) => i.t.advisory),
       stale: members.every((i) => i.t.status === 'stale'),
       faint: members.every((i) => i.faint),
+      lost: members.every((i) => (fateFor(i.t) || {}).fate === 'lost'),
+      down: members.every((i) => ['down', 'left'].includes((fateFor(i.t) || {}).fate)),
       tg: members.every((i) => !!i.t.tg),
       vague: members.every((i) => vagueOf(i.t)),
       dest: members.every((i) => i.t.destination && i.p.angle == null),
@@ -721,6 +772,8 @@
       cls.toggle('faint', u.faint && !u.stale);
       cls.toggle('vague', !!u.vague);
       cls.toggle('tg', !!u.tg);
+      cls.toggle('lost', !!u.lost);
+      cls.toggle('down', !!u.down);
       cls.toggle('dest', !!u.dest);
       cls.toggle('sel', u.sel || (!!group && u.ids.some((id) => group.includes(id))));
       m.el.style.display = '';
@@ -955,9 +1008,26 @@
           }),
         );
       }
+      if (p.heading == null) {
+        // No course: it is not standing still, only nobody said where it went. A dashed circle of where it
+        // may be by now (typical speed × the time since the last report), with that time.
+        const seen = lastSeen(t);
+        const min = seen ? (now - seen) / 60000 : 0;
+        if (min >= 1) {
+          const km = Math.min(RANGE_MAX_KM, Math.max(t.uncertaintyKm || 3, min * (RANGE_KM_MIN[kind] || 2.5)));
+          const r = km / kmPerUnit;
+          g.appendChild(svgEl('circle', { class: 'range', cx: p.x.toFixed(2), cy: p.y.toFixed(2), r: r.toFixed(3) }));
+          const label = svgEl('text', { class: 'range-t', x: p.x.toFixed(2), y: (p.y - r - 3 * unitsPerPx).toFixed(2), 'font-size': (10 * unitsPerPx).toFixed(3) });
+          label.textContent = `${Math.round(min)} хв без даних · до ${Math.round(km)} км`;
+          g.appendChild(label);
+        }
+      }
       if (g.childNodes.length) trackLayer.appendChild(g);
     }
   }
+  // How far a target without a course may have got per minute since its last report, and at most.
+  const RANGE_KM_MIN = { uav: 2.5, jet: 7, recon: 2, fpv: 1, kab: 4, missile: 12, ballistic: 30, mig31k: 15, unknown: 2.5 };
+  const RANGE_MAX_KM = 60;
 
   // Course line and uncertainty circle of the selected target (when it is in view).
   function drawSelection(now) {
@@ -1086,6 +1156,8 @@
     for (const t of pointTargets()) {
       const near = nearOf(t, now);
       if (!near) continue;
+      const f = fateFor(t);
+      if (f && f.fate !== 'lost') continue; // "Збили", "Вилетів з області"
       const limit = inside.has(t.id) ? radiusOf(t) * 1.3 : radiusOf(t);
       if (near.km > limit) continue;
       seen.add(t.id);
@@ -1252,7 +1324,9 @@
     const conf = CONFIDENCE[t.displayConfidence || t.confidenceLevel];
     let note = '';
     const vg = vagueOf(t);
+    const fate = fateFor(t);
     if (t.areaOnly) note = 'Лише область';
+    else if (fate) note = `${FATE_NOTE[fate.fate]} · ${fate.channel} ${hhmm(fate.at)}`;
     else if (t.tg) note = 'Лише з каналу';
     else if (vg && vg.raion) note = 'Десь у районі';
     else if (vg) note = `Приблизно, ±${Math.round(vg.km)} км`;
@@ -1263,7 +1337,7 @@
     const course =
       p.heading == null
         ? `<span class="h-b none">—</span>`
-        : `<span class="h-b dir">${arrowIco(p.angle == null ? p.heading : p.angle)}на ${compass8(p.heading)}<small>${Math.round(p.heading)}°</small></span>${p.byPosts ? '<small>за каналом</small>' : ''}`;
+        : `<span class="h-b dir">${arrowIco(p.angle == null ? p.heading : p.angle)}на ${compass8(p.heading)}<small>${Math.round(p.heading)}°</small></span>${p.byPosts ? `<small>${p.courseBy === 'moves' ? 'оцінка за рухом' : 'за каналом'}</small>` : ''}`;
     const o = originOf(t, now);
     const from = o ? `<span class="h-b dir">з ${compass8(o.bearing)}</span><small>${esc(originText(o))}${o.est ? ' · оцінка' : ''}</small>` : '—';
     const eta = etaMin(t, near);
@@ -1788,6 +1862,7 @@
   client.subscribe((kind) => {
     if (kind === 'data') {
       clientRev++;
+      recordMoves(Date.now());
       newTargets();
       renderAll();
     }

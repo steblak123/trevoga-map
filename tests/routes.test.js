@@ -33,8 +33,9 @@ function run(posts) {
 }
 
 const fmt = (s) =>
-  `  → ${s.track.split('#')[1]} ${KIND[s.kind]}${s.count > 1 ? ` ×${s.count}` : ''} | ${s.pos ? s.pos.name + (s.pos.est ? ' (куди)' : '') : '—'}` +
-  ` | з: ${s.from || '—'} | на: ${s.to || '—'}${s.heading != null ? ` | курс ${Math.round(s.heading)}°` : ''}${s.gone ? ' | зник' : ''}`;
+  `  → ${s.track.split('#')[1]} ${KIND[s.kind]}${s.count > 1 ? ` ×${s.count}` : ''} | ${s.pos ? s.pos.name + (s.pos.last ? ' (востаннє)' : s.pos.est ? ' (куди)' : '') : '—'}` +
+  ` | з: ${s.from || '—'} | на: ${s.to || '—'}${s.heading != null ? ` | курс ${Math.round(s.heading)}°` : ''}${s.gone ? ` | ${FATE[s.fate]}` : ''}`;
+const FATE = { lost: 'зник з радарів', down: 'збито', left: 'вилетів' };
 
 function report(read) {
   const lines = [];
@@ -336,4 +337,28 @@ test('types.predict: the channel course is used when NEPTUN has none, and over N
   assert.equal(p.byPosts, true);
   assert.equal(T.predict({ ...t, heading: null }, Date.now()).heading, 270);
   T.setCourse(null);
+});
+
+// ---------- "Зник" and "Збили" ----------
+
+test('"Не спостерігається" keeps the target 5 minutes as lost, "Збили" takes it off at once', () => {
+  const r = new Routes(window.NeptunBasemapPlaces);
+  r.kmPerUnit = KM;
+  r.defaultHome = { x: 563.9, y: 326.1 };
+  const t0 = Date.parse('2026-11-04T14:00:00Z');
+  const at = (min) => new Date(t0 + min * 60000).toISOString();
+  r.add([{ channel: '@a', id: 1, date: at(0), text: 'Реактивний на Канатове', reply: null }], t0);
+  const [lost] = r.add([{ channel: '@a', id: 2, date: at(1), text: 'Зник, але здається десь низько летить', reply: { id: 1, text: 'Реактивний на Канатове' } }], t0 + 60000);
+  assert.equal(lost.fate, 'lost');
+  assert.equal(lost.pos.name, 'Канатове', 'where it was last');
+  assert.equal(r.live(t0 + 3 * 60000).length, 1, 'still there 2 min later');
+  assert.equal(r.live(t0 + 3 * 60000)[0].lost, true);
+  assert.equal(r.live(t0 + 7 * 60000).length, 0, 'gone after 5 min');
+  r.add([{ channel: '@a', id: 3, date: at(2), text: 'Дрон на Компаніївку', reply: null }], t0 + 120000);
+  const [down] = r.add([{ channel: '@a', id: 4, date: at(3), text: 'Збили', reply: { id: 3, text: 'Дрон на Компаніївку' } }], t0 + 180000);
+  assert.equal(down.fate, 'down');
+  assert.ok(!r.live(t0 + 180000).some((s) => s.track === down.track), 'shot down: off at once');
+  const [back] = r.add([{ channel: '@a', id: 5, date: at(4), text: 'Знову до нас - Созонівка', reply: { id: 2, text: 'Зник' } }], t0 + 240000);
+  assert.equal(back.track, lost.track, 'a lost one seen again is the same target');
+  assert.ok(!back.gone);
 });

@@ -124,6 +124,17 @@
 .nep-marker.vague { opacity: 0.5; }
 /* a target only your channel has so far: dashed ring */
 .nep-marker.tg .halo { stroke-dasharray: 3 2.2; }
+/* "Зник", "Не спостерігається": it may fly low; slowly fading in and out for a few minutes */
+.nep-marker.lost { animation: nep-lost 2.6s ease-in-out infinite; }
+.nep-marker.lost .halo { stroke-dasharray: 1.6 2.4; }
+@keyframes nep-lost { 0%, 100% { opacity: 0.75; } 50% { opacity: 0.28; } }
+/* "Збили", "Вилетів з області": grey and faint until NEPTUN takes it off */
+.nep-marker.down { opacity: 0.3; filter: grayscale(0.8); animation: none; }
+.nep-marker.down:hover, .nep-marker.lost:hover { opacity: 1; animation: none; }
+@media (prefers-reduced-motion: reduce) { .nep-marker.lost { animation: none; opacity: 0.5; } }
+/* where a target without a course may be by now */
+#nep-tracks .range { fill: color-mix(in srgb, var(--c) 6%, transparent); stroke: var(--c); stroke-opacity: 0.6; stroke-width: 1.1px; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+#nep-tracks .range-t { fill: #c9d4e2; text-anchor: middle; font-family: var(--h-txt, sans-serif); paint-order: stroke; stroke: rgba(6, 10, 16, 0.85); stroke-width: 3px; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .nep-marker.vague .halo { stroke-dasharray: 1.6 2.2; }
 .nep-marker.vague:hover, .nep-marker.vague.sel { opacity: 1; }
 
