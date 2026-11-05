@@ -68,6 +68,7 @@
       this.listeners = new Set();
       this.trusted = new Set(); // your own channels ('@name', lower case): one of them is enough for a jet
       this.seen = new Map(); // channel|text -> times: the same post from the feed and from Telegram
+      this.feedChannels = new Set(); // '@name' (lower case) of the channels in NEPTUN's own feed
       this.routes = null; // routes.js over the basemap gazetteer (setPlaces)
       this.nearCache = new Map(); // track id -> its near() for this version
       this.project = null; // (lat, lon) -> [x, y] in map units, set by widget.js
@@ -105,6 +106,8 @@
         const res = await fetch(URL, { cache: 'no-store' });
         if (!res.ok) return;
         const body = await res.json();
+        // the channels NEPTUN reads itself: their targets are NEPTUN's (widget.js makes none of its own of them)
+        for (const m of body.messages || []) if (m && m.channel) this.feedChannels.add(String(m.channel).trim().toLowerCase());
         if (this.add(body.messages || [])) this.changed();
       } catch (e) {
         console.log('[intel] messages:', e.message);

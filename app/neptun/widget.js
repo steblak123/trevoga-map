@@ -29,6 +29,12 @@
   const FAST = new Set(['missile', 'ballistic', 'jet', 'kab', 'mig31k']);
   // Two radii: one for drones, one for missiles, KABs and aviation (they come from farther, faster).
   const MISSILES = new Set(['missile', 'ballistic', 'kab', 'mig31k']);
+  // NEPTUN's own map: "Дрони без курсу на карті не малюємо, хіба що вони поруч із Домом" — Shaheds and recon
+  // drones with no course are left off the map unless within NEAR_HOME_KM of you, and even then when a drone
+  // with a course (as many or more) is within TWIN_KM of it: that is the same one, reported once more.
+  const NO_COURSE_KINDS = new Set(['uav', 'jet', 'recon']);
+  const NEAR_HOME_KM = 50;
+  const TWIN_KM = 20;
   // Direction sector length by kind: [km at most, km when the speed is unknown]; missiles reach far ahead.
   const CONFIDENCE = { high: 'висока', medium: 'середня', low: 'низька' };
   const STATUS = { appr: 'Наближається', pass: 'Проліт', away: 'Віддаляється', hit: 'Удар', unk: 'Невідомо' };
@@ -271,6 +277,8 @@
   // "над морем", or the oblast for area-only reports.
   function placeShort(t) {
     if (t.areaOnly) return shortName(t.region);
+    const alt = altName(t);
+    if (alt) return alt;
     const vg = vagueOf(t);
     if (vg && vg.raion) return raionShort(vg.raion);
     if (seaOf(t)) return 'над морем';
@@ -323,6 +331,8 @@
   // For tooltips: place plus region.
   function placeHtml(t) {
     if (t.areaOnly) return `<b>${esc(t.region)}</b>`;
+    const alt = altName(t);
+    if (alt) return `<b>${esc(alt)}</b> <small>одне з місць</small>`;
     const vg = vagueOf(t);
     if (vg && vg.raion) return `<b>${esc(raionShort(vg.raion))}</b> <small>місце неточне</small>`;
     if (vg) return `<b>${esc(t.locality || t.district || t.region)}</b> <small>±${Math.round(vg.km)} км</small>`;
@@ -362,7 +372,78 @@
     const f = fateFor(t);
     return !f || f.fate !== 'down' || Date.now() - f.at <= DOWN_SHOW_MS;
   };
-  const targets = () => [...client.list().filter(shownYet), ...channelTargets()].filter(visible);
+  const targets = () => [...client.list().filter((t) => shownYet(t) && !alternatives().hidden.has(t.id)), ...channelTargets()].filter(visible);
+
+  // ---------- one target, several places ----------
+  // A post that names places as alternatives ("курсом на Черкащину (Кам'янка/Сміла)") makes NEPTUN put a track at
+  // each of them: two markers with the same sources for one jet. Tracks of the same kind and size (one each),
+  // NEPTUN gave no course, reported within ALT_MIN of each other ALT_KM or less apart, and a line of a post about
+  // them naming both places with "/" or "або": one target. It stands at the place nearest to you (the worse
+  // case) and reads "Кам’янка / Сміла"; the others are not drawn or counted again.
+  const ALT_KM = 70;
+  const ALT_MIN = 10;
+  let altCache = { k: '', hidden: new Set(), of: new Map() };
+  function alternatives() {
+    const k = `${intel ? intel.version : 0}|${clientRev}|${home ? home.x + ',' + home.y : ''}|${mine.length}`;
+    if (altCache.k === k) return altCache;
+    const res = { k, hidden: new Set(), of: new Map() };
+    altCache = res; // before the work: targets() asks for it while it runs
+    const key = window.NeptunIntel && window.NeptunIntel.placeKey;
+    if (!intel || !key || !project) return res;
+    const family = (t) => (NO_COURSE_KINDS.has(kindOf(t)) ? 'drone' : kindOf(t));
+    const list = client.list().filter((t) => !t.areaOnly && t.locality && Number.isFinite(t.lat) && t.heading == null && !t.velocity && !(t.count > 1) && shownYet(t));
+    if (list.length < 2) return res;
+    const lines = new Map(); // id -> lines of the posts about it (and its own words)
+    const linesOf = (t) => {
+      if (!lines.has(t.id)) lines.set(t.id, [t.explanationShort, ...intel.mentions(t).map((m) => m.text)].filter(Boolean).flatMap((s) => String(s).split(/\n+/)));
+      return lines.get(t.id);
+    };
+    const names = (line) => ` ${key(line)} `;
+    const ALT = /[/|]|(?:^|\s)або(?:\s|$)/i;
+    const both = (a, b) => {
+      const ka = ` ${key(a.locality)} `;
+      const kb = ` ${key(b.locality)} `;
+      if (ka === kb) return false;
+      return [...linesOf(a), ...linesOf(b)].some((line) => ALT.test(line) && names(line).includes(ka) && names(line).includes(kb));
+    };
+    const parent = new Map(list.map((t) => [t.id, t.id]));
+    const find = (id) => (parent.get(id) === id ? id : find(parent.get(id)));
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const a = list[i];
+        const b = list[j];
+        if (family(a) !== family(b)) continue;
+        if (Math.abs((Date.parse(a.confirmedAt || a.updatedAt) || 0) - (Date.parse(b.confirmedAt || b.updatedAt) || 0)) > ALT_MIN * 60000) continue;
+        const km = Geo.distanceKm(a.lat, a.lon, b.lat, b.lon);
+        if (km < 3 || km > ALT_KM || !both(a, b)) continue;
+        parent.set(find(a.id), find(b.id));
+      }
+    }
+    const groups = new Map();
+    for (const t of list) {
+      const r = find(t.id);
+      if (!groups.has(r)) groups.set(r, []);
+      groups.get(r).push(t);
+    }
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      const dist = (t) => {
+        if (!hasBase()) return 0;
+        const [x, y] = project(t.lat, t.lon);
+        const n = nearestAt(x, y);
+        return n ? n.km : 0;
+      };
+      g.sort((a, b) => dist(a) - dist(b) || (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
+      res.of.set(g[0].id, g.slice(1));
+      for (const t of g.slice(1)) res.hidden.add(t.id);
+    }
+    return res;
+  }
+  const altsOf = (t) => (t && !t.tg ? alternatives().of.get(t.id) || null : null);
+  const altName = (t) => {
+    const alts = altsOf(t);
+    return alts ? [t.locality, ...alts.map((a) => a.locality)].join(' / ') : null;
+  };
   const getTarget = (id) => (typeof id === 'string' && id.startsWith('tg:') ? channelTargets().find((t) => t.id === id) : client.threats.get(id));
 
   // ---------- targets of your channels that NEPTUN has not got (yet) ----------
@@ -370,8 +451,9 @@
   // point of a route of one of your channels) is drawn with a dashed ring, counts for the radius and the banner,
   // until NEPTUN has one of its kind within 25 km of it, or the channel has not written of it for a few minutes.
   const TG_TYPE = { jet: 'uav', plain: 'uav', missile: 'missile', kab: 'kab', recon: 'recon', fpv: 'fpv' };
-  const TG_FRESH_MIN = { jet: 5, missile: 3, kab: 3 }; // others 8
+  const TG_FRESH_MIN = { jet: 7, missile: 3, kab: 3 }; // others 8
   const TG_SAME_KM = 25;
+  const TG_AREA_KM = 150; // a target only your channel has is shown this close to your point / regions
   const TG_MERGE_KM = 20; // two of your channels about one target: this close…
   const TG_MERGE_MIN = 6; // …and this soon after each other
   let tgCache = { k: '', list: [] };
@@ -387,26 +469,42 @@
     // (within TG_MERGE_KM and TG_MERGE_MIN of each other): "@krop_vanek: … Ганнівка" and "@shpk_krop: Зайшов
     // в область, Ганнівка" are one jet with two sources.
     const cands = [];
+    const nameKey = window.NeptunIntel && window.NeptunIntel.placeKey;
     for (const s of intel.routes.live(now, 8 * 60000)) {
-      if (!intel.trusted.has(String(s.channel).toLowerCase())) continue;
+      const ch = String(s.channel).toLowerCase();
+      if (!intel.trusted.has(ch)) continue;
+      // A channel NEPTUN reads itself (an all-Ukraine summary like @povitryanatrivogaaa): NEPTUN has its targets.
+      if (intel.feedChannels && intel.feedChannels.has(ch)) continue;
       if (now - s.at > (TG_FRESH_MIN[s.kind] || 8) * 60000) continue;
+      // Only around you: farther off, NEPTUN's own tracks are the ones to go by.
+      if (hasBase()) {
+        const n = nearestAt(s.pos.x, s.pos.y);
+        if (n && n.km > TG_AREA_KM) continue;
+      }
       const type = TG_TYPE[s.kind] || 'unknown';
       const [lat, lon] = un(s.pos.x, s.pos.y);
       const missile = MISSILES.has(type);
+      const tr = intel.routes.track(s.channel, s.track);
+      // its way over the last minutes (map units): two channels about one target meet somewhere on it, though
+      // one says where it is ("Бокове") and the other where it heads ("→Братолюбівка")
+      const path = (tr ? tr.points : []).filter((q) => s.at - q.at <= 10 * 60000).map((q) => ({ x: q.x, y: q.y }));
+      path.push({ x: s.pos.x, y: s.pos.y });
+      // NEPTUN has it when its track (where it is now, where it was reported, its trail) is near that way —
+      // NEPTUN lags behind the channel, and a channel's "→Х" runs ahead of the target.
+      const same = TG_SAME_KM / kmPerUnit;
       const known = neptun.some((t) => {
         if (MISSILES.has(kindOf(t)) !== missile) return false;
         // a NEPTUN track shot down stands only for a channel target that is gone too (the same one)
         const f = intel.fateOf(t);
         if (f && f.fate !== 'lost' && !s.down && !s.lost) return false;
         const p = predict(t, now);
-        return Geo.distanceKm(p.lat, p.lon, lat, lon) <= TG_SAME_KM;
+        const pts = [[p.lat, p.lon], [t.lat, t.lon], ...(Array.isArray(t.trail) ? t.trail : []).filter((q) => q && Number.isFinite(q.lat)).map((q) => [q.lat, q.lon])].map(([la, lo]) => project(la, lo));
+        if (pts.some(([x, y]) => path.some((q) => Math.hypot(q.x - x, q.y - y) <= same))) return true;
+        // the same village named ("→Петропавлівка/Павлоград" and NEPTUN's "Петропавлівка"), the point a bit off
+        const km = Geo.distanceKm(p.lat, p.lon, lat, lon);
+        return km <= 60 && !!nameKey && !!t.locality && s.pos.name.split('/').some((n) => nameKey(n) === nameKey(t.locality));
       });
       if (known) continue;
-      const tr = intel.routes.track(s.channel, s.track);
-      // its way over the last minutes (map units): two channels about one target meet somewhere on it, though
-      // one says where it is ("Бокове") and the other where it heads ("→Братолюбівка")
-      const path = (tr ? tr.points : []).filter((q) => s.at - q.at <= 10 * 60000).map((q) => ({ x: q.x, y: q.y }));
-      path.push({ x: s.pos.x, y: s.pos.y });
       cands.push({ s, lat, lon, type, missile, path, first: tr && tr.points.length ? tr.points[0].at : s.at });
     }
     const meet = (a, b) => {
@@ -451,7 +549,7 @@
         locality: s.pos.name.split('/')[0],
         region: '',
         district: '',
-        toward: toward ? toward.s.pos.name.split('/')[0] : '',
+        toward: toward && toward.s.pos.name.split('/')[0] !== s.pos.name.split('/')[0] ? toward.s.pos.name.split('/')[0] : '',
         updatedAt: iso,
         confirmedAt: iso,
         status: 'active',
@@ -551,7 +649,14 @@
 
   const alertInMine = () => !!(R && alertState.iot && mine.some((s) => R.statusOf(alertState.iot, s.uid) !== 'N'));
   const pointTargets = () => targets().filter((t) => !t.areaOnly);
-  const courseless = (t, now) => SHAHEDS.has(kindOf(t)) && predict(t, now).heading == null;
+  // A course worked out from a hint ("з Кіровоградщини", the front for a KAB) is a guess: its arrow is
+  // dimmed, and the target still counts as one without a course; it gives no "наближається" / "віддаляється".
+  const guessed = (p) => p.courseBy === 'text' || p.courseBy === 'front';
+  const knownCourse = (t, now) => {
+    const p = predict(t, now);
+    return p.heading != null && !guessed(p);
+  };
+  const courseless = (t, now) => NO_COURSE_KINDS.has(kindOf(t)) && !knownCourse(t, now);
 
   // Every target is on the map. A Shahed without a course far from your regions is drawn faint: the report
   // names only a place near which it was (NEPTUN leaves such ones off its map and counts them "ще N без курсу").
@@ -562,7 +667,26 @@
     const near = nearOf(t, now);
     return !near || near.km > HOME_KM;
   }
-  const mapTargets = () => pointTargets();
+  // The map, by NEPTUN's own rule (NO_COURSE_KINDS above); the tile still counts them ("N без курсу").
+  function offMap(t, now, all) {
+    if (t.id === selected || (group && group.includes(t.id)) || t.tg) return false;
+    if (!courseless(t, now)) return false;
+    const near = nearOf(t, now);
+    if (!near || near.km > Math.max(NEAR_HOME_KM, radiusOf(t))) return true;
+    const p = predict(t, now);
+    return all.some((o) => o.id !== t.id && NO_COURSE_KINDS.has(kindOf(o)) && !courseless(o, now) && sizeOf(o) >= sizeOf(t) && (() => {
+      const q = predict(o, now);
+      return Geo.distanceKm(p.lat, p.lon, q.lat, q.lon) <= TWIN_KM;
+    })());
+  }
+  let mapCache = { now: 0, list: [] };
+  function mapTargets(now = Date.now()) {
+    if (mapCache.now === now) return mapCache.list;
+    const all = pointTargets();
+    const list = all.filter((t) => !offMap(t, now, all));
+    mapCache = { now, list };
+    return list;
+  }
 
   // A report that names a raion, not a place ("дрон Кропивницький район"): NEPTUN then puts the point at the
   // town the raion is named after, its centre. Such a target is drawn faint, with the raion outlined, and
@@ -645,7 +769,7 @@
     if (nearCache.has(t.id)) return nearCache.get(t.id);
     const p = placeOf(t, now);
     const near = nearestAt(p.x, p.y);
-    if (near && near.km > 0 && p.heading != null) {
+    if (near && near.km > 0 && p.heading != null && !guessed(p)) {
       const [lat2, lon2] = Geo.dest(p.lat, p.lon, p.heading, 3);
       const ahead = nearestAt(...project(lat2, lon2));
       if (ahead.km < near.km - 0.5) near.trend = 'наближається';
@@ -850,6 +974,7 @@
       lost: members.every((i) => (fateFor(i.t) || {}).fate === 'lost'),
       down: members.every((i) => ['down', 'left'].includes((fateFor(i.t) || {}).fate)),
       tg: members.every((i) => !!i.t.tg),
+      guess: guessed(lead.p),
       vague: members.every((i) => vagueOf(i.t)),
       // "курсом на Х": the point is where it heads, not where it is; a sight there, any kind
       dest: members.every((i) => i.t.destination),
@@ -886,6 +1011,7 @@
       cls.toggle('faint', u.faint && !u.stale);
       cls.toggle('vague', !!u.vague);
       cls.toggle('tg', !!u.tg);
+      cls.toggle('guess', !!u.guess);
       cls.toggle('lost', !!u.lost);
       cls.toggle('down', !!u.down);
       cls.toggle('dest', !!u.dest);
@@ -950,11 +1076,26 @@
     const u = unitsPerPx;
     const done = new Set();
     let key = '';
-    const list = mapTargets(now).filter((t) => (picked(t) || nearish(t, now)) && !fateFor(t)).slice(0, 8); // a lost or downed one: no band, no circle
+    const list = mapTargets(now).filter((t) => featured(t) && !fateFor(t)).slice(0, 8); // a lost or downed one: no band, no circle
     for (const t of list) {
       const p = placeOf(t, now);
       const { to, from, at } = placesOf(t, p);
       const color = metaOf(t).color;
+      // "Кам’янка / Сміла": the other places the post named, with a dashed line — it is at one of them
+      for (const a of altsOf(t) || []) {
+        const [ax, ay] = project(a.lat, a.lon);
+        const g = svgEl('g', { class: 'nep-pl alt' });
+        g.style.setProperty('--c', color);
+        g.append(
+          svgEl('line', { class: 'ln', x1: p.x.toFixed(2), y1: p.y.toFixed(2), x2: ax.toFixed(2), y2: ay.toFixed(2) }),
+          svgEl('circle', { class: 'dt', cx: ax.toFixed(2), cy: ay.toFixed(2), r: (2.6 * u).toFixed(3) }),
+        );
+        const text = svgEl('text', { x: (ax + 6 * u).toFixed(2), y: (ay + 4 * u).toFixed(2), 'font-size': (11 * u).toFixed(3) });
+        text.textContent = `або ${a.locality}`;
+        g.appendChild(text);
+        placeLayer.appendChild(g);
+        key += 'alt' + a.id + '|';
+      }
       // To the place it heads: a wide soft band, and there a circle of where it may hit, growing with the
       // time since it was said (the place is a village, the target may turn off a little).
       if (to) {
@@ -1138,11 +1279,9 @@
   }
   const showsFrom = (t) => picked(t);
   const wantsTrack = (t) => picked(t);
-  // Within twice your radius (or in it): worth its "where it may be" circle without a click.
-  const nearish = (t, now) => {
-    const near = nearOf(t, now);
-    return !!near && near.km <= radiusOf(t) * 2;
-  };
+  // Sectors, bands and circles only for the target you picked and those in your radius (the ones of the
+  // banner and of "Біля вас"): NEPTUN's map has none, with many targets they cover the map.
+  const featured = (t) => picked(t) || inside.has(t.id);
 
   // Where each target came from (reported trail up to its position now) and where it heads:
   // a translucent sector, wider when the course is only an estimate.
@@ -1164,8 +1303,7 @@
     };
     for (const t of mapTargets(now)) {
       const pick = wantsTrack(t, now);
-      // Not picked: only a target near you (twice your radius) gets its sector or circle.
-      if (!pick && !nearish(t, now)) continue;
+      if (!featured(t)) continue;
       const fate = (fateFor(t) || {}).fate;
       if (fate === 'down' || fate === 'left') continue; // "Мінус", "Збили": only the cross on it, nothing around
       const p = placeOf(t, now);
@@ -1199,12 +1337,12 @@
       }
       // Where it may get in the next AHEAD_MIN minutes: a soft sector along its course, wider when the course
       // is only worked out — unless it is known where it heads (drawPlaces: a band to there).
-      if (p.heading != null && fate !== 'lost' && !(destOf(t, p) || {}).name) {
+      if (p.heading != null && !guessed(p) && fate !== 'lost' && !(destOf(t, p) || {}).name) {
         const reach = window.NeptunTypes.reachKm ? window.NeptunTypes.reachKm(t, AHEAD_MIN) : 25;
         const minKm = (BADGE_PX + 26) * unitsPerPx * kmPerUnit; // past the badge
         const km = Math.max(minKm, Math.min(AHEAD_MAX_KM, Math.max(AHEAD_MIN_KM, reach)));
-        const guessed = ['moves', 'text', 'front'].includes(p.courseBy) || !(t.velocity && t.velocity.speedKmh > 0);
-        const spread = guessed ? 34 : 20;
+        const rough = p.courseBy === 'moves' || !(t.velocity && t.velocity.speedKmh > 0);
+        const spread = rough ? 34 : 20;
         const at = (deg, k) => project(...Geo.dest(p.lat, p.lon, deg, k));
         const xy = ([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`;
         const arc = [];
@@ -1219,7 +1357,7 @@
         );
         g.appendChild(svgEl('line', { class: 'axis', stroke: fade([p.x, p.y], tipPt, [[0, '#ffffff', pick ? 0.9 : 0.55], [1, '#ffffff', 0]]), x1: p.x.toFixed(2), y1: p.y.toFixed(2), x2: tipPt[0].toFixed(2), y2: tipPt[1].toFixed(2) }));
       }
-      if (p.heading == null) {
+      if (p.heading == null || guessed(p)) {
         // No course: it is not standing still, only nobody said where it went. A dashed circle of where it
         // may be by now (typical speed × the time since the last report), with that time.
         const seen = lastSeen(t);
@@ -1399,7 +1537,7 @@
       return entered;
     }
     const seen = new Set();
-    for (const t of pointTargets()) {
+    for (const t of mapTargets(now)) { // what the map shows: a twin left off it is not one more target near you
       const near = nearOf(t, now);
       if (!near) continue;
       const f = fateFor(t);
@@ -1418,7 +1556,7 @@
 
   // Close targets, nearest first.
   function closeTargets(now) {
-    return pointTargets()
+    return mapTargets(now)
       .filter((t) => inside.has(t.id))
       .map((t) => ({ t, near: nearOf(t, now) }))
       .filter((x) => x.near)
@@ -1455,7 +1593,7 @@
 
   function nearestTarget(now) {
     let best = null;
-    for (const t of pointTargets()) {
+    for (const t of mapTargets(now)) {
       const near = nearOf(t, now);
       if (near && (!best || near.km < best.near.km)) best = { t, near };
     }
@@ -1498,7 +1636,7 @@
     const otherAlerts = regs.slice(1).filter((r) => r.st === 'A').length;
     const best = nearestTarget(now);
     let risk = 0;
-    for (const t of pointTargets()) risk = Math.max(risk, targetRisk(t, nearOf(t, now)));
+    for (const t of mapTargets(now)) risk = Math.max(risk, targetRisk(t, nearOf(t, now)));
     if (regs.some((r) => r.st === 'A')) risk = Math.max(risk, 1);
     regionEl.dataset.risk = String(risk);
     const dir = best && best.near.km >= 0.5 ? bearingFrom(best.near.shape, best.t, now) : null;
@@ -1548,7 +1686,7 @@
     if (close.length >= FULL_ROWS) return head + listHtml(close, now);
     // Room left: the next nearest targets beyond the radius, under a quiet divider.
     const ids = new Set(close.map((t) => t.id));
-    const further = pointTargets()
+    const further = mapTargets(now)
       .filter((t) => !ids.has(t.id))
       .map((t) => ({ t, near: nearOf(t, now) }))
       .filter((x) => x.near)
@@ -1573,6 +1711,7 @@
     const vg = vagueOf(t);
     const fate = fateFor(t);
     if (t.areaOnly) note = 'Лише область';
+    else if (altsOf(t)) note = 'Одне з місць';
     else if (fate) note = `${FATE_NOTE[fate.fate]} · ${fate.channel} ${hhmm(fate.at)}`;
     else if (t.tg) note = 'Лише з каналу';
     else if (vg && vg.raion) note = 'Десь у районі';

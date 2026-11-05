@@ -39,11 +39,14 @@
   const fateOf = (line) => (DOWN.test(line) ? 'down' : LEFT.test(line) ? 'left' : LOST.test(line) ? 'lost' : null);
   const LOST_MS = 5 * 60000;
   const DOWN_MS = 4 * 60000; // a shot down one stays this long, with a cross, then goes
-  const STEADY_KM = 8; // a lost target stays this long
+  const STEADY_KM = 8;
+  const BASE_KM = 200;
+  const LOCAL_SPREAD_KM = 120; // a channel whose places lie farther from their middle writes about all Ukraine
+  const CONTEXT_PT_MS = 10 * 60000; // the last place a channel named is the context of its next post this long // a channel writing about places this close to your point is a local one // a lost target stays this long
   const NEW = /(?:^|\s)(?:ще|і ще|за ним|другий|другого|третій|ще один|наступн|новий|нова ціль|нові)(?![а-яіїєґ])/i;
   const ORDINAL = /^\s*(\d)\s*-?\s*(?:й|ий|ій|га|гий|ге)(?![а-яіїєґ])|^\s*(перший|другий|третій)/i;
   const COUNT = /^\s*(?:(?:і\s+)?ще\s+|за\s+ним\s+ще\s+|всього\s+)?(\d{1,2})(?![\d:.,/-])|(?:^|[\s(])(\d{1,2})\s*(?:х|x|шт)(?![а-яіїєґ])/i;
-  const SAFE = /без\s+загроз|звуки\s+добр|не\s+летить|нічого\s+нема|поки\s+немає|поки\s+локаційно|чуєте|чули|статус|як\s*\?|онлайн/i;
+  const SAFE = /без\s+загроз|звуки\s+добр|не\s+летить|нічого\s+нема|(?:^|\s)нема(?:є)?(?![а-яіїєґ])|поки\s+локаційно|чуєте|чули|статус|як\s*\?|онлайн/i;
   // News about what was hit, not where a target is now.
   const BOOM = /вибух|прил[іи]т|прильот|влучанн/i; // explosions are read by intel.js
   const NEWS = /внаслідок|пошкоджен|постраждал|загинул|поранен|завдав удар|вдарил|знищили|вибухотехнік|дснс|рятувальник|уламк/i;
@@ -52,6 +55,7 @@
     [/кривим\s+рогом|кривого\s+рогу|кривому\s+розі|кривий\s+ріг/gi, 'Кривий-Ріг'],
     [/жовті\s+води|жовтих\s+вод|жовтим\s+водам/gi, (m) => m.replace(/\s+/, ' ')],
     [/дніпро\.?\s*обл\S*|днпр\.?(?:\s*обл\S*)?/gi, 'Дніпропетровщина'],
+    [/(^|[\s(/,])ЖВ(?=[\s/,.)!]|$)/g, '$1Жовті Води'],
   ];
   const NOISE_POST = /https?:\/\/|реквізит|підтрим|донат|кавою|хвилина мовчання|t\.me\//i;
   const GREETING = /📅|доброго ранку|добрий ранок|хвилина мовчання|надобраніч|тихої ночі|тихого (?:дня|вечора)/i;
@@ -91,7 +95,9 @@
     [/^(?:кроп|кропа|кропі|кропу)$/i, 'Кропивницький'],
     [/^(?:знам|знамі)$/i, 'Знам’янка'],
     [/^(?:долік|доліку)$/i, 'Долинська'],
-    [/^(?:кривого|кривому|кривий|кривий-ріг)$/i, 'Кривий Ріг'],
+    [/^(?:кривого|кривому|кривим|кривий|кривий-ріг)$/i, 'Кривий Ріг'],
+    [/^(?:птх|птх\.)$/i, 'П’ятихатки'],
+    [/^(?:крем|кременя)$/i, 'Кременчук'],
     [/^(?:олек|олександрії)$/i, 'Олександрія'],
     [/^(?:канат|канатове|канатовому)$/i, 'Канатове'],
     [/^(?:байраки|байраків)$/i, 'Високі Байраки'],
@@ -247,6 +253,20 @@
     return groups;
   }
 
+  // How far a target may have got since it was last named (km): the way it flies, with slack, at most 90 km.
+  const reachOf = (t, at) => Math.min(90, 20 + (Math.max(0, at - t.updated) / 60000) * (KM_PER_MIN[t.kind] || 8));
+
+  // May a line of this kind be about a track of that kind: the same, or a jet for one first called a plain
+  // Shahed — unless the post itself tells jets from ordinary ones ("Реактивний → … ⏎ БпЛА → …").
+  const fits = (lineKind, trackKind, mixed) => !lineKind || !trackKind || lineKind === trackKind || (lineKind === 'jet' && trackKind === 'plain' && !mixed);
+
+  // Does the line say it is about another target: "Ще 1 …", "за ним", "новий", "другий" (not "Зелене, ще 2 позаду"
+  // — that place is of this one, the others come after it — and not "1й …", the first of those followed).
+  function explicitNew(line, groups, ordinal) {
+    const nw = NEW.exec(line);
+    return !!nw && ordinal !== 1 && !(groups.length && groups[0].start < nw.index);
+  }
+
   function kindOf(line) {
     const k = KIND.find(([, re]) => re.test(line));
     return k ? k[0] : null;
@@ -269,7 +289,9 @@
     }
 
     // The village of that name nearest to ref; null when even that one is too far for this channel.
-    pick(cands, ref, home) {
+    // alt: a second place to read the name near (the context of a new target: where the channel wrote about
+    // last, and your point) — the nearer of the two counts.
+    pick(cands, ref, home, alt) {
       if (!cands || !cands.length) return null;
       const r = ref || home || this.defaultHome;
       if (!r) {
@@ -281,7 +303,7 @@
       for (const p of cands) {
         // A town before a village not much nearer: "П'ятихатки" is the town in Dnipro oblast, not the village
         // of that name half as far away.
-        const d = (dist(p, r) + 2) / (RANK_WEIGHT[p.rank] || 1);
+        const d = (Math.min(dist(p, r), alt ? dist(p, alt) : Infinity) + 2) / (RANK_WEIGHT[p.rank] || 1);
         if (d < bd) {
           bd = d;
           best = p;
@@ -294,10 +316,10 @@
     }
 
     // One point for a group of names: their middle when they are close together, else the first one.
-    point(group, ref, home) {
+    point(group, ref, home, alt) {
       const pts = [];
       for (const cands of group.cands) {
-        const p = this.pick(cands, pts[0] || ref, home);
+        const p = this.pick(cands, pts[0] || ref, home, pts.length ? null : alt);
         if (p) pts.push(p);
       }
       if (!pts.length) return null;
@@ -307,6 +329,19 @@
       return { x, y, name: close.map((p) => p.name).join('/'), said: group.names.join('/'), rank: Math.min(...close.map((p) => p.rank)) };
     }
 
+    // Where to read a channel's place names near when there is no target to read them near: your point, for a
+    // channel that writes about your area (its own middle within BASE_KM of you, or not known yet); else the
+    // middle of where that channel writes about. Its first posts may all be about a place on the way in
+    // (28.10: П'ятихатки), and of "Долинська" the town is meant, not a village of that name near there.
+    // A channel about all of Ukraine (its places spread far and wide) keeps its own middle.
+    baseOf(st) {
+      const mine = this.defaultHome;
+      if (!mine) return st.home;
+      if (st.home && st.spreadKm > LOCAL_SPREAD_KM) return st.home;
+      if (!st.home || dist(st.home, mine) * this.kmPerUnit <= BASE_KM) return mine;
+      return st.home;
+    }
+
     learnHome(st, p) {
       if (!p || p.rank > 6) return;
       st.homePts.push({ x: p.x, y: p.y });
@@ -314,7 +349,12 @@
       const xs = st.homePts.map((q) => q.x).sort((a, b) => a - b);
       const ys = st.homePts.map((q) => q.y).sort((a, b) => a - b);
       const mid = (a) => a[Math.floor(a.length / 2)];
-      if (st.homePts.length >= 3) st.home = { x: mid(xs), y: mid(ys) };
+      if (st.homePts.length >= 3) {
+        st.home = { x: mid(xs), y: mid(ys) };
+        // how far its places lie from their middle (the median): a local channel's are within ~100 km
+        const ds = st.homePts.map((q) => dist(q, st.home) * this.kmPerUnit).sort((a, b) => a - b);
+        st.spreadKm = mid(ds);
+      }
     }
 
     // posts: [{ channel, id, date, text, reply: { id, text } | null }], oldest first or not.
@@ -345,6 +385,57 @@
       }
     }
 
+    // The plan of a post of several lines: Map line index -> { t: track, rr: resolved places }, the nearest
+    // line-target pairs first, each target and each line at most once, a pair only if the target could
+    // have got there (reachOf), of a fitting kind, and the line does not say it is another one.
+    plan(st, lines, at) {
+      const plan = new Map();
+      if (lines.length < 2) return plan;
+      const live = [...st.tracks.values()].filter((t) => !t.gone && t.last && at - t.updated <= TRACK_MS && t.updated - at <= 60000);
+      if (!live.length) return plan;
+      const pairs = [];
+      let headKind = null; // of a line that names no place ("По реактивам", "БпЛА по області:")
+      let area = null;
+      const mixed = lines.some((l) => kindOf(l) === 'plain') && lines.some((l) => kindOf(l) === 'jet');
+      lines.forEach((line, li) => {
+        const lk = kindOf(line);
+        if (ALERT.test(line) || /^\s*\+/.test(line) || AIR.test(line) || BOOM.test(line)) return;
+        const head = /^[^А-Яа-яІіЇїЄєҐґA-Za-z]*([А-ЯІЇЄҐ][^:()]{3,40}?)(?:\s*\([^)]*\))?\s*:\s*$/.exec(line);
+        if (head) {
+          const g = placesIn(head[1], this.gaz)[0];
+          area = g && g.region ? g.center : null;
+          return;
+        }
+        if (CLEAR.test(line) || GONE.test(line)) return;
+        const groups = placesIn(line, this.gaz);
+        if (!groups.length) {
+          if (lk) headKind = lk;
+          return;
+        }
+        const ord = ORDINAL.exec(line);
+        const ordinal = ord ? (ord[1] ? Number(ord[1]) : { перший: 1, другий: 2, третій: 3 }[ord[2].toLowerCase()]) : 0;
+        if (explicitNew(line, groups, ordinal)) return;
+        const inRegion = groups.find((g) => g.region && g.role === 'at');
+        const where = (inRegion && inRegion.center) || area;
+        for (const t of live) {
+          if (!fits(lk || headKind, t.kind, mixed)) continue;
+          const rr = this.resolve(groups, t.last, where || this.baseOf(st), false);
+          if (!rr.pos) continue;
+          if (where && dist(rr.pos, where) * this.kmPerUnit > AREA_KM) continue;
+          const km = dist(t.last, rr.pos) * this.kmPerUnit;
+          if (km <= reachOf(t, at)) pairs.push({ li, t, rr, km });
+        }
+      });
+      pairs.sort((a, b) => a.km - b.km);
+      const taken = new Set();
+      for (const p of pairs) {
+        if (plan.has(p.li) || taken.has(p.t.id)) continue;
+        plan.set(p.li, p);
+        taken.add(p.t.id);
+      }
+      return plan;
+    }
+
     // The tracks a reply continues: those of the post it answers, or of that post's own reply chain.
     replyTracks(st, post) {
       let id = post.reply && post.reply.id;
@@ -370,11 +461,18 @@
       const quoteKind = quoted ? kindOf(quoted) : null;
       const thread = post.reply ? this.replyTracks(st, post) : [];
       let postKind = null;
+      let headKind = null; // the kind a line with no place names, for the lines after it
       let area = null; // "✈️Житомирщина:" — the region the next lines are about (all-Ukraine channels)
       let body = text;
       for (const [re, to] of REWRITE) body = body.replace(re, to);
       const lines = body.split(/\n+/).map((l) => l.trim()).filter(Boolean);
       const used = new Set();
+      // A post of several lines without a reply ("1 → Компаніївка ⏎ 1 → Долинська", four minutes later
+      // "1 → Червоновершка ⏎ 1 → Молодіжне") is mostly where the targets the channel follows are now: its lines
+      // go to those targets together, the nearest pairs first, so that a line does not take the target that is
+      // the next line's. Only a line no target could have reached, or that says so ("Ще 1 …"), is a new one.
+      const plan = post.reply ? new Map() : this.plan(st, lines, at);
+      const mixed = lines.some((l) => kindOf(l) === 'plain') && lines.some((l) => kindOf(l) === 'jet');
       for (let li = 0; li < lines.length; li++) {
         const line = lines[li];
         const lk = kindOf(line);
@@ -397,16 +495,17 @@
         const groups = placesIn(line, this.gaz);
         const gone = GONE.test(line);
         const fate = gone ? fateOf(line) : null;
+        if (!groups.length && lk) headKind = lk;
         if (!groups.length && !gone) continue;
         if (SAFE.test(line) && groups.length <= 1 && !gone) continue; // "Кроп без загроз ✅"
         if (/^\s*(?:якщо|може|можливо|ймовірно|очікуємо|будуть|буде)\s/i.test(line) && !thread.length) continue; // what may come
         const ord = ORDINAL.exec(line);
         const ordinal = ord ? (ord[1] ? Number(ord[1]) : { перший: 1, другий: 2, третій: 3 }[ord[2].toLowerCase()]) : 0;
-        // A list of targets ("1 на Смоліне" / "2х БпЛА Тишківка") names new ones; so do "ще", "за ним".
+        // A line of a list ("1 на Смоліне", "2х БпЛА Тишківка") is where one of the targets is now; it is a new
+        // one only when it says so ("ще", "за ним", "новий") or no target of the channel could have got there.
         const listed = !ord && (lines.length > 1 || !post.reply) && /^\s*\d+\s*(?:х|x|шт\S*)?(?:\s|→|-|$)/i.test(line);
         // "Зелене, ще 2 позаду йде": the place is of this one, the others come after it.
-        const nw = NEW.exec(line);
-        const isNew = (nw && ordinal !== 1 && !(groups.length && groups[0].start < nw.index)) || listed;
+        const isNew = explicitNew(line, groups, ordinal);
         const cnt = COUNT.exec(line);
         const count = cnt && !ord ? Math.max(1, Number(cnt[1] || cnt[2])) : 1;
         const kindHint = lk || postKind || quoteKind;
@@ -420,29 +519,35 @@
           else {
             // Of a thread of several ("1 Смоліне / 1 Новомиргород / 1 Вільне" -> "Нова Павлівка") the one nearest.
             const free = thread.filter((t) => !used.has(t.id));
-            track = free.length > 1 ? this.nearest(free, groups, area || st.home) : free[0] || (used.size ? null : thread[0]);
+            track = free.length > 1 ? this.nearest(free, groups, area || this.baseOf(st)) : free[0] || (used.size ? null : thread[0]);
           }
         }
         // "Затока/Чорноморськ (Одещина)": the region named in the line is where to look for the names.
         const inRegion = groups.find((g) => g.region && g.role === 'at');
         const where = (inRegion && inRegion.center) || area;
-        const near = track ? track.last : thread.length ? thread[0].last : where;
-        let r = this.resolve(groups, near, where || st.home, isNew);
+        // A new target's names: near where the channel wrote about last (a few minutes ago) or near you,
+        // whichever has the place — "На Петрове" after "Ще один на Птх" is the Петрове by П'ятихатки.
+        const local = !(st.spreadKm > LOCAL_SPREAD_KM); // a channel about all Ukraine jumps from region to region
+        const ctx = local && !track && !thread.length && !where && st.last && at - st.last.at <= CONTEXT_PT_MS ? st.last : null;
+        const near = track ? track.last : thread.length ? thread[0].last : where || ctx;
+        let r = this.resolve(groups, near, where || this.baseOf(st), isNew, ctx ? this.baseOf(st) : null);
+        const planned = plan.get(li);
+        if (!track && !thread.length && planned && !used.has(planned.t.id) && !isNew) {
+          track = planned.t;
+          r = planned.rr;
+        }
         if (!track && !thread.length && (!isNew || ordinal) && (r.pos || groups.length)) {
           let best = null;
           let bd = Infinity;
           for (const t of st.tracks.values()) {
             if (t.gone || !t.last || at - t.updated > TRACK_MS || t.updated - at > 60000 || used.has(t.id)) continue;
-            // A "БпЛА" may turn out jet in a reply; a line that names its kind is about a target of that kind.
-            if (lk && t.kind && lk !== t.kind) continue;
-            if (!lk && kindHint && t.kind && kindHint !== t.kind) continue;
-            const rr = this.resolve(groups, t.last, where || st.home, false);
+            // A line that names its kind is about a target of that kind (a "БпЛА" may turn out jet).
+            if (!fits(lk || headKind || quoteKind, t.kind, mixed)) continue;
+            const rr = this.resolve(groups, t.last, where || this.baseOf(st), false);
             if (!rr.pos) continue;
             if (where && dist(rr.pos, where) * this.kmPerUnit > AREA_KM) continue; // a namesake outside the region
             const km = dist(t.last, rr.pos) * this.kmPerUnit;
-            // "Реактив Голованівськ" names a target of its own unless one was just next to it.
-            const reach = lk ? 15 + 4 * minutes(t) : Math.min(90, 20 + minutes(t) * (KM_PER_MIN[t.kind] || 8));
-            if (km <= reach && km < bd) {
+            if (km <= reachOf(t, at) && km < bd) {
               bd = km;
               best = { t, rr };
             }
@@ -457,7 +562,7 @@
           const km = dist(track.last, r.pos) * this.kmPerUnit;
           if (km > 40 + minutes(track) * (KM_PER_MIN[track.kind] || 11) * 1.5) {
             track = null;
-            r = this.resolve(groups, where, where || st.home, true);
+            r = this.resolve(groups, where, where || this.baseOf(st), true);
           }
         }
         const { pos, toG, fromG, toPt } = r;
@@ -484,10 +589,10 @@
         used.add(track.id);
         if (lk && (!track.kind || track.kind === 'plain' || lk === 'jet')) track.kind = lk;
         else if (!track.kind) track.kind = kindHint || (at - st.kindAt < CONTEXT_MS ? st.kind : null);
-        if (count > 1 && isNew) track.count = count;
+        if (count > 1 && (isNew || listed)) track.count = count; // "2х БпЛА → Х": that many there now
 
         const prev = track.last;
-        const fromPt = fromG && !fromG.region ? this.point(fromG, prev || pos, st.home) : null;
+        const fromPt = fromG && !fromG.region ? this.point(fromG, prev || pos, this.baseOf(st)) : null;
         let heading = null;
         // The course over at least STEADY_KM of its way (the last 15 min), so a village to the side does not
         // swing it; a turn ("Відвернув на …") shows once it has gone that far the new way.
@@ -523,6 +628,7 @@
           text: line.length > 120 ? line.slice(0, 119) + '…' : line,
         };
         if (pos) {
+          st.last = { x: pos.x, y: pos.y, at };
           track.last = { x: pos.x, y: pos.y, name: pos.name, at };
           track.points.push(track.last);
           if (!pos.est && pos.rank <= 6) this.learnHome(st, pos);
@@ -536,7 +642,12 @@
           track.fate = null;
         }
         track.updated = at;
-        if (track.kind) {
+        // The kind the channel itself named last is the context of its next posts ("Ще 1 до нас …"); targets
+        // of that kind going on keep it alive, a target that only inherited another kind does not change it.
+        if (lk || quoteKind) {
+          st.kind = lk || quoteKind;
+          st.kindAt = at;
+        } else if (track.kind && (track.kind === st.kind || !st.kind || at - st.kindAt > CONTEXT_MS)) {
           st.kind = track.kind;
           st.kindAt = at;
         }
@@ -555,8 +666,8 @@
     // Points of the place groups of a line read near ref (or the channel's area): where the target is (named
     // bare or after "біля", "над"; else where it flies, "на Х" is said as it comes up to Х; else, for a new
     // target, where it comes from: "Реактивний від Жовті Води до нас"), where it flies and where from.
-    resolve(groups, ref, home, isNew) {
-      const pts = groups.map((g) => (g.region ? null : this.point(g, ref, home)));
+    resolve(groups, ref, home, isNew, alt) {
+      const pts = groups.map((g) => (g.region ? null : this.point(g, ref, home, alt)));
       const atIdx = groups.findIndex((g, i) => g.role === 'at' && pts[i]);
       const toIdx = groups.findIndex((g, i) => g.role === 'to' && pts[i]);
       const fromIdx = groups.findIndex((g, i) => g.role === 'from' && pts[i]);

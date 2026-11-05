@@ -26,9 +26,12 @@ const KIND = { jet: 'реактивний', plain: 'шахед', missile: 'ра�
 const week = (ch) => JSON.parse(fs.readFileSync(path.join(FIX, `${ch}.week.json`), 'utf8')).map((p) => ({ ...p, channel: '@' + ch }));
 
 // Reads the posts one by one, as they came: [{ post, out: [sightings] }].
+// As in the widget of the one who follows these channels: their point is in Kropyvnytskyi.
+const HOME = { x: 563.9, y: 326.1 };
 function run(posts) {
   const r = new Routes(window.NeptunBasemapPlaces);
   r.kmPerUnit = KM;
+  r.defaultHome = HOME;
   return { r, read: posts.map((p) => ({ post: p, out: r.add([p], Date.parse(p.date)) })) };
 }
 
@@ -391,4 +394,50 @@ test('a target with a course but no speed creeps, it does not race off: at most 
 test('"Пропав" is lost too', () => {
   const read = readAll([P(1, 'Реактивний на Канатове'), P(2, 'Пропав', { reply: { id: 1, text: 'Реактивний на Канатове' } })]);
   assert.equal(one(read, 2).fate, 'lost');
+});
+
+// ---------- the same targets, not new ones ----------
+
+test('@krop_vanek: the lists "1 → Компаніївка ⏎ 1 → Долинська" four minutes apart are the same two jets', () => {
+  const { read } = run(week('krop_vanek'));
+  const a = byId(read, 35269); // 18:01 1 → Компаніївка ⏎ 1 → Долинська
+  const b = byId(read, 35270); // 18:05 1 → Червоновершка ⏎ 1 → Молодіжне
+  const c = byId(read, 35271); // 18:08 1 → Димине/Семенасте ⏎ 1 → Компаніївка
+  const ids = new Set([...a, ...b, ...c].map((s) => s.track));
+  assert.ok(ids.size <= 3, `${ids.size} targets for two jets: ${[...ids].join(', ')}`);
+  for (const s of b) assert.ok(new Set(a.map((x) => x.track)).has(s.track), `${s.pos.name}: one of the two of 18:01`);
+  assert.equal(a[1].pos.name, 'Долинська', 'the town, not the village Долинське');
+});
+
+test('@shpk_krop: "Ще один на Птх" → "Зайшов. На Петрове" → "Верблюжка" → "В бік Компаніївки" → "Хмельове" is one jet', () => {
+  const { read } = run(week('shpk_krop'));
+  const ids = [16603, 16606, 16607, 16609, 16612].map((id) => one(read, id).track);
+  assert.equal(new Set(ids).size, 1, ids.join(', '));
+  assert.equal(one(read, 16603).pos.name, 'П’ятихатки', '"Птх"');
+  assert.equal(one(read, 16606).pos.name, 'Петрове', 'the Петрове by П\'ятихатки');
+  const ptx = window.NeptunBasemapPlaces.places.find((p) => p[2] === 'П’ятихатки' && p[3] <= 4);
+  const p = one(read, 16606).pos;
+  assert.ok(Math.hypot(p.x - ptx[0], p.y - ptx[1]) * KM < 40, 'next to П\'ятихатки, not the village by Kropyvnytskyi');
+  assert.equal(byId(read, 17317).length, 0, '"Локаційних Кроп/Знам/Олександр немає": none there');
+  assert.equal(one(read, 16525).pos.name, 'Кривий Ріг', '"Над Кривим"');
+});
+
+test('a week of your two channels: few targets twice at once (the many of a mass attack aside)', () => {
+  const limits = { krop_vanek: 45, shpk_krop: 100 };
+  for (const ch of Object.keys(limits)) {
+    const r = new Routes(window.NeptunBasemapPlaces);
+    r.kmPerUnit = KM;
+    r.defaultHome = HOME;
+    let twins = 0;
+    for (const p of week(ch)) {
+      const now = Date.parse(p.date);
+      r.add([p], now);
+      const live = r.live(now, 8 * 60000).filter((s) => !s.down);
+      const fam = (k) => (['missile', 'kab'].includes(k) ? k : 'drone');
+      for (let i = 0; i < live.length; i++)
+        for (let j = i + 1; j < live.length; j++)
+          if (fam(live[i].kind) === fam(live[j].kind) && Math.hypot(live[i].pos.x - live[j].pos.x, live[i].pos.y - live[j].pos.y) * KM <= 20) twins++;
+    }
+    assert.ok(twins <= limits[ch], `@${ch}: ${twins} pairs of targets within 20 km of each other (was 90 / 119 before)`);
+  }
 });

@@ -121,7 +121,9 @@
     // same limits. Not a point that is only where it heads ("курсом на Х": it is there already), not a lost one.
     const typical = TYPICAL_KMH[kindOf(t)];
     const from = Date.parse(t.confirmedAt || t.updatedAt);
-    if (heading != null && typical && from && !t.areaOnly && !t.destination && !t.lost && t.status !== 'stale') {
+    // A guess ("з Кіровоградщини", the front for a KAB) turns its arrow, it does not move it.
+    const hunch = byPosts && (c.by === 'text' || c.by === 'front');
+    if (heading != null && typical && from && !hunch && !t.areaOnly && !t.destination && !t.lost && t.status !== 'stale') {
       const meta = typeMeta(kindOf(t));
       const ageMin = (now - from) / 60000;
       if (ageMin > 0) {
