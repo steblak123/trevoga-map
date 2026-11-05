@@ -127,22 +127,37 @@
 #nep-places { pointer-events: none; }
 .nep-pl text { font-family: var(--h-txt, sans-serif); paint-order: stroke; stroke: rgba(6, 10, 16, 0.92); stroke-width: 3.2px; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .nep-pl.to text { fill: #fff; font-weight: 700; letter-spacing: 0.01em; }
-.nep-pl.from text { fill: #b8c6d6; font-weight: 600; }
+.nep-pl.from text { fill: #c9d4e2; font-weight: 700; }
 .nep-pl .dt { fill: var(--c); stroke: rgba(6, 10, 16, 0.9); stroke-width: 1.2px; vector-effect: non-scaling-stroke; }
 .nep-pl.from .dt { fill: rgba(6, 10, 16, 0.6); stroke: #b8c6d6; }
 .nep-pl .ln { stroke: var(--c); stroke-opacity: 0.55; stroke-width: 1.2px; stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
+/* "Зник" / "Пропав": a dashed cross over the target; "Збили": a solid one */
+.nep-marker .xmark { display: none; fill: none; stroke-width: 2.6; stroke-linecap: round; filter: drop-shadow(0 0 1.2px rgba(0, 0, 0, 1)); }
+.nep-marker.lost .xmark { display: inline; stroke: #ffd3a1; stroke-dasharray: 2.2 1.8; }
+.nep-marker.down .xmark { display: inline; stroke: #ff4d57; }
+/* to where it heads: a wide soft band, and a circle of where it may hit there, breathing slowly */
+.nep-goal .band { stroke: var(--c); stroke-opacity: 0.32; stroke-width: 7px; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.nep-goal .zone { fill: color-mix(in srgb, var(--c) 16%, transparent); stroke: var(--c); stroke-opacity: 0.85; stroke-width: 1.6px; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.nep-goal .wave { fill: none; stroke: var(--c); stroke-width: 1.4px; vector-effect: non-scaling-stroke; transform-box: fill-box; transform-origin: center; animation: nep-wave 2.8s ease-out infinite; }
+@keyframes nep-wave { from { transform: scale(0.35); opacity: 0.8; } to { transform: scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .nep-goal .wave { animation: none; opacity: 0; } }
+body.nep-calm .nep-goal .wave { animation-duration: 4s; }
+/* the sector ahead: where it may get in ten minutes */
+#nep-tracks .ahead { stroke: none; }
 .nep-marker.tg .halo { stroke-dasharray: 3 2.2; }
 /* "Зник", "Не спостерігається": it may fly low; slowly fading in and out for a few minutes */
 .nep-marker.lost { animation: nep-lost 2.6s ease-in-out infinite; }
 .nep-marker.lost .halo { stroke-dasharray: 1.6 2.4; }
 @keyframes nep-lost { 0%, 100% { opacity: 0.75; } 50% { opacity: 0.28; } }
 /* "Збили", "Вилетів з області": grey and faint until NEPTUN takes it off */
-.nep-marker.down { opacity: 0.3; filter: grayscale(0.8); animation: none; }
+.nep-marker.down { opacity: 0.6; animation: none; }
+.nep-marker.down .glyph, .nep-marker.down .halo { filter: grayscale(0.8); opacity: 0.6; }
 .nep-marker.down:hover, .nep-marker.lost:hover { opacity: 1; animation: none; }
 @media (prefers-reduced-motion: reduce) { .nep-marker.lost { animation: none; opacity: 0.5; } }
 /* where a target without a course may be by now */
 #nep-tracks .range { fill: color-mix(in srgb, var(--c) 6%, transparent); stroke: var(--c); stroke-opacity: 0.6; stroke-width: 1.1px; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
-#nep-tracks .range.quiet { stroke-opacity: 0.4; fill: color-mix(in srgb, var(--c) 4%, transparent); }
+#nep-tracks .range.quiet { stroke-opacity: 0.45; fill: color-mix(in srgb, var(--c) 4%, transparent); }
+#nep-tracks .range-t.quiet { fill: #aebccc; }
 #nep-tracks .range-t { fill: #c9d4e2; text-anchor: middle; font-family: var(--h-txt, sans-serif); paint-order: stroke; stroke: rgba(6, 10, 16, 0.85); stroke-width: 3px; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .nep-marker.vague .halo { stroke-dasharray: 1.6 2.2; }
 .nep-marker.vague:hover, .nep-marker.vague.sel { opacity: 1; }

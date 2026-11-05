@@ -34,10 +34,12 @@
   // minutes, faint), 'down' ("Збили", "Мінус", "Впав") or 'left' ("Вилетів з області"): gone at once.
   const DOWN = /збили|збито|(?:^|\s)мінус(?![а-яіїєґ])|впав|впала|недолетів|знищен|приземлил/i;
   const LEFT = /вилетів|вилітає з област|виходить з обл|вийшов з обл/i;
-  const LOST = /не\s*спостеріга|(?:^|\s)зник|зникл|не\s*фікс|^[—–-]+$/i;
+  const LOST = /не\s*спостеріга|(?:^|\s)зник|зникл|пропав|пропал|не\s*фікс|^[—–-]+$/i;
   const GONE = new RegExp(`${DOWN.source}|${LEFT.source}|${LOST.source}`, 'i');
   const fateOf = (line) => (DOWN.test(line) ? 'down' : LEFT.test(line) ? 'left' : LOST.test(line) ? 'lost' : null);
-  const LOST_MS = 5 * 60000; // a lost target stays this long
+  const LOST_MS = 5 * 60000;
+  const DOWN_MS = 4 * 60000; // a shot down one stays this long, with a cross, then goes
+  const STEADY_KM = 8; // a lost target stays this long
   const NEW = /(?:^|\s)(?:ще|і ще|за ним|другий|другого|третій|ще один|наступн|новий|нова ціль|нові)(?![а-яіїєґ])/i;
   const ORDINAL = /^\s*(\d)\s*-?\s*(?:й|ий|ій|га|гий|ге)(?![а-яіїєґ])|^\s*(перший|другий|третій)/i;
   const COUNT = /^\s*(?:(?:і\s+)?ще\s+|за\s+ним\s+ще\s+|всього\s+)?(\d{1,2})(?![\d:.,/-])|(?:^|[\s(])(\d{1,2})\s*(?:х|x|шт)(?![а-яіїєґ])/i;
@@ -487,7 +489,20 @@
         const prev = track.last;
         const fromPt = fromG && !fromG.region ? this.point(fromG, prev || pos, st.home) : null;
         let heading = null;
-        const a = pos && prev && dist(prev, pos) * this.kmPerUnit >= 3 ? prev : fromPt;
+        // The course over at least STEADY_KM of its way (the last 15 min), so a village to the side does not
+        // swing it; a turn ("Відвернув на …") shows once it has gone that far the new way.
+        let a = null;
+        if (pos) {
+          for (let i = track.points.length - 1; i >= 0; i--) {
+            const q = track.points[i];
+            if (at - q.at > 15 * 60000) break;
+            a = q;
+            if (dist(q, pos) * this.kmPerUnit >= STEADY_KM) break;
+          }
+          if (!a && prev) a = prev; // named long ago: still the way it came
+          if (a && dist(a, pos) * this.kmPerUnit < 3) a = null;
+        }
+        if (!a) a = fromPt;
         if (pos && a && dist(a, pos) * this.kmPerUnit >= 3) heading = bearing(a, pos);
         if (pos && toPt && dist(pos, toPt) * this.kmPerUnit >= 3) heading = bearing(pos, toPt);
         const prevName = track.points.length ? [...track.points].reverse().find((q) => !pos || q.name !== pos.name) : null;
@@ -586,6 +601,7 @@
         if (!t) continue;
         if (!t.gone) out.push(s);
         else if (t.fate === 'lost' && now - t.goneAt <= LOST_MS) out.push({ ...s, lost: true });
+        else if (t.fate === 'down' && now - t.goneAt <= DOWN_MS) out.push({ ...s, down: true });
       }
       return out;
     }

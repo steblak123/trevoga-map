@@ -221,13 +221,16 @@
     fateOf(t) {
       if (!this.routes) return null;
       const since = Date.parse(t.updatedAt || t.confirmedAt) || 0;
+      let found = null;
       for (const x of this.near(t)) {
         const s = x.route;
         if (!s.fate || s.at <= since) continue;
         if (this.routes.lastOf(s.track) !== s) continue;
-        return { fate: s.fate, channel: s.channel, at: s.at, text: s.text };
+        const f = { fate: s.fate, channel: s.channel, at: s.at, text: s.text };
+        if (s.fate === 'down') return f; // "мінус" in one channel beats "—" in another
+        if (!found) found = f;
       }
-      return null;
+      return found;
     }
 
     // A course from the words of the posts about the track: "Ракета з Харківщини курсом на Полтаву", "КАБ від

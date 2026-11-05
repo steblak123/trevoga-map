@@ -107,7 +107,8 @@
       const bearing = newer ? c.heading : v.bearingDeg;
       const ageMin = (now - Date.parse(t.confirmedAt)) / 60000;
       if (ageMin > 0) {
-        const km = Math.min(meta.maxKm, (v.speedKmh * Math.min(ageMin, meta.horizonMin)) / 60);
+        // slowly and not far: a reported speed is often off, and a jump back at the next update is worse
+        const km = Math.min(meta.maxKm, REPORTED_MAX_KM, (v.speedKmh * REPORTED_SHARE * Math.min(ageMin, meta.horizonMin)) / 60);
         const [lat, lon] = Geo.dest(t.lat, t.lon, bearing, km);
         return { lat, lon, heading: bearing, km, flying: ageMin <= meta.horizonMin && km > 0.05, byPosts: newer, courseBy: newer ? c.by : null };
       }
@@ -124,7 +125,9 @@
       const meta = typeMeta(kindOf(t));
       const ageMin = (now - from) / 60000;
       if (ageMin > 0) {
-        const km = Math.min(meta.maxKm, (typical * Math.min(ageMin, meta.horizonMin)) / 60);
+        // very slowly and at most a few km: it stays about where it was said to be; where it may get to
+        // is the sector ahead (widget.js)
+        const km = Math.min(meta.maxKm, GUESS_MAX_KM, (typical * GUESS_SHARE * Math.min(ageMin, meta.horizonMin)) / 60);
         const [lat, lon] = Geo.dest(t.lat, t.lon, heading, km);
         return { lat, lon, heading, km, flying: ageMin <= meta.horizonMin && km > 0.05, estSpeed: typical, ...extra };
       }
@@ -133,6 +136,15 @@
   }
   // The usual speed of a kind, km/h, for a track with a course and no speed (ballistic and aviation: none).
   const TYPICAL_KMH = { uav: 150, jet: 450, recon: 120, fpv: 60, missile: 750, kab: 400 };
+  const GUESS_SHARE = 0.25; // of the usual speed, for a track with a course and no speed
+  const GUESS_MAX_KM = 4;
+  const REPORTED_SHARE = 0.6;
+  const REPORTED_MAX_KM = 8;
+  // How far a target may get in the next minutes (the sector ahead in widget.js), km.
+  const reachKm = (t, min) => {
+    const v = t.velocity && t.velocity.speedKmh > 0 ? t.velocity.speedKmh : TYPICAL_KMH[kindOf(t)] || 0;
+    return (v * min) / 60;
+  };
 
-  root.NeptunTypes = { TYPES, ORDER, typeMeta, kindOf, classify, setHint, setCourse, predict };
+  root.NeptunTypes = { TYPES, ORDER, typeMeta, kindOf, classify, setHint, setCourse, predict, reachKm };
 })(self);

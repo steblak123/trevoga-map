@@ -30,7 +30,6 @@
   // Two radii: one for drones, one for missiles, KABs and aviation (they come from farther, faster).
   const MISSILES = new Set(['missile', 'ballistic', 'kab', 'mig31k']);
   // Direction sector length by kind: [km at most, km when the speed is unknown]; missiles reach far ahead.
-  const AHEAD = { missile: [160, 110], ballistic: [140, 90], jet: [120, 80], mig31k: [100, 70], kab: [45, 30] };
   const CONFIDENCE = { high: 'висока', medium: 'середня', low: 'низька' };
   const STATUS = { appr: 'Наближається', pass: 'Проліт', away: 'Віддаляється', hit: 'Удар', unk: 'Невідомо' };
   const RISK = ['Низький', 'Середній', 'Високий'];
@@ -83,6 +82,15 @@
     {
       if (vagueOf(t)) return null; // a raion-level point is too rough to match
       const r = intel && intel.routes ? intel.routeOf(t, 10 * 60000) : null;
+      // "Летить на Павлиш": it heads for Павлиш, whatever the last villages were.
+      if (project && !t.tg) {
+        const [x, y] = project(t.lat, t.lon);
+        const d = destOf(t, { x, y }, r);
+        if (d && !d.here && Math.hypot(d.x - x, d.y - y) * kmPerUnit >= 3) {
+          const [la, lo] = Geo.mapUnprojector(projDef)(d.x, d.y);
+          return { heading: Geo.bearing(t.lat, t.lon, la, lo), at: r ? r.at : 0, by: r ? 'posts' : 'text' };
+        }
+      }
       if (r && r.heading != null && r.points.length >= 2) return { heading: r.heading, at: r.at, by: 'posts' };
       if (t.tg || t.heading != null) return null;
       // Never over NEPTUN's own course (at: 0): how it moved; the post's "з Харківщини"; a KAB from the front.
@@ -346,7 +354,15 @@
 
   // Targets the user wants to see: the FPV filter applies to the map, the dock, tiles and banners alike.
   const visible = (t) => !(opts.hideFpv && kindOf(t) === 'fpv');
-  const targets = () => [...client.list(), ...channelTargets()].filter(visible);
+  // A track your channel said was shot down stays DOWN_SHOW_MS with a cross, then leaves the map before NEPTUN
+  // takes it off.
+  const DOWN_SHOW_MS = 4 * 60000;
+  const shownYet = (t) => {
+    if (t.tg) return true;
+    const f = fateFor(t);
+    return !f || f.fate !== 'down' || Date.now() - f.at <= DOWN_SHOW_MS;
+  };
+  const targets = () => [...client.list().filter(shownYet), ...channelTargets()].filter(visible);
   const getTarget = (id) => (typeof id === 'string' && id.startsWith('tg:') ? channelTargets().find((t) => t.id === id) : client.threats.get(id));
 
   // ---------- targets of your channels that NEPTUN has not got (yet) ----------
@@ -379,6 +395,9 @@
       const missile = MISSILES.has(type);
       const known = neptun.some((t) => {
         if (MISSILES.has(kindOf(t)) !== missile) return false;
+        // a NEPTUN track shot down stands only for a channel target that is gone too (the same one)
+        const f = intel.fateOf(t);
+        if (f && f.fate !== 'lost' && !s.down && !s.lost) return false;
         const p = predict(t, now);
         return Geo.distanceKm(p.lat, p.lon, lat, lon) <= TG_SAME_KM;
       });
@@ -442,8 +461,14 @@
         destination: !!s.pos.est, // "на Канатове": it is coming up to it, not past it
         uncertaintyKm: s.pos.est ? 10 : 5,
         explanationShort: g.map((c) => `${c.s.channel}: ${c.s.text}`).join(' · '),
-        tg: { channel: channels.join(', '), channels, text: s.text, at: s.at },
+        tg: { channel: channels.join(', '), channels, text: s.text, at: s.at, to: (g.find((c) => c.s.to) || { s: {} }).s.to || null },
+        // its way as your channel told it: straight legs between the villages
+        trail: (intel.routes.track(oldest.s.channel, oldest.s.track) || { points: [] }).points.slice(-8, -1).map((q) => {
+          const [la, lo] = un(q.x, q.y);
+          return { lat: la, lon: lo, t: new Date(q.at).toISOString() };
+        }),
         lost: g.every((c) => c.s.lost) ? s.at : 0, // "Зник": stays a few minutes, faint
+        down: g.some((c) => c.s.down) ? Math.max(...g.filter((c) => c.s.down).map((c) => c.s.at)) : 0, // "Мінус": a cross, then gone
       });
     }
     tgCache = { k, list };
@@ -462,7 +487,7 @@
   // What your channel last said of a target: 'down' ("Збили", "Мінус": faint, no banner), 'lost' ("Зник",
   // "Не спостерігається": it may fly low; blinks slowly), 'left' (out of the oblast), or null.
   function fateFor(t) {
-    if (t.tg) return t.lost ? { fate: 'lost', channel: t.tg.channel, at: t.lost } : null;
+    if (t.tg) return t.down ? { fate: 'down', channel: t.tg.channel, at: t.down } : t.lost ? { fate: 'lost', channel: t.tg.channel, at: t.lost } : null;
     return intel && intel.routes ? intel.fateOf(t) : null;
   }
   const FATE_NOTE = { down: 'за каналом: збито', lost: 'втрачено', left: 'вилетів з області' };
@@ -718,7 +743,9 @@
     el.append(aim, svgEl('circle', { class: 'pulse', r: 11 }), ptr, svgEl('circle', { class: 'halo', r: 11 }));
     const glyph = svgEl('g', { class: 'glyph' });
     const cnt = svgEl('text', { class: 'cnt', x: 9, y: 16 });
-    el.append(glyph, cnt);
+    // "Зник" / "Пропав": a dashed cross over it; "Збили": a solid one
+    const cross = svgEl('path', { class: 'xmark', d: 'M-4.2-4.2 4.2 4.2M4.2-4.2-4.2 4.2', transform: 'translate(12.5 -12.5)' });
+    el.append(glyph, cross, cnt);
     markerLayer.appendChild(el);
     return { el, glyph, ptr, cnt, kind: null };
   }
@@ -887,27 +914,35 @@
   // thin dashed line from the target, and the one it came from, quieter. Readable without zooming in; the
   // basemap's own names keep off them.
   let placesKey = '';
-  function placesOf(t, p) {
-    const r = intel && intel.routes ? intel.routeOf(t) : null;
-    const here = { x: p.x, y: p.y };
+  const GOAL_KM = 3; // the circle where it may hit: from this…
+  const GOAL_KM_MIN = 0.8; // …growing this much a minute since the post…
+  const GOAL_MAX_KM = 15; // …up to this
+  // Where a target heads: { x, y, name, here } (here: the point is that place itself, "курсом на Х"), or null.
+  function destOf(t, p, r = intel && intel.routes ? intel.routeOf(t) : null) {
     const find = (name) => {
       if (!name || !intel || !intel.routes) return null;
-      const q = intel.routes.pick(intel.routes.gaz.byName(name), here, null);
-      return q && Math.hypot(q.x - p.x, q.y - p.y) * kmPerUnit < 150 ? q : null;
+      const q = intel.routes.pick(intel.routes.gaz.byName(name), p, null);
+      return q && Math.hypot(q.x - p.x, q.y - p.y) * kmPerUnit < 150 ? { x: q.x, y: q.y, name: q.name } : null;
     };
-    let to = null;
-    const toName = t.toward || (r && r.to) || (t.destination ? t.locality : null);
-    if (t.destination && toName === t.locality) {
+    const name = t.toward || (t.tg && t.tg.to) || (r && r.to) || null;
+    const q = find(name);
+    if (q) return q;
+    if (t.destination && t.locality) {
       const [x, y] = project(t.lat, t.lon);
-      to = { x, y, name: t.locality };
-    } else to = find(toName);
+      return { x, y, name: t.locality, here: true };
+    }
+    return null;
+  }
+  function placesOf(t, p) {
+    const r = intel && intel.routes ? intel.routeOf(t) : null;
+    const to = destOf(t, p, r);
     let from = null;
     if (r && r.points.length >= 2) {
       const prev = r.points[r.points.length - 2];
       if (prev && Math.hypot(prev.x - p.x, prev.y - p.y) * kmPerUnit < 150) from = { x: prev.x, y: prev.y, name: prev.name.split('/')[0] };
     }
     if (from && to && from.name === to.name) from = null;
-    return { to, from };
+    return { to, from, at: r ? r.at : lastSeen(t) };
   }
   function drawPlaces(now) {
     placeLayer.textContent = '';
@@ -915,11 +950,25 @@
     const u = unitsPerPx;
     const done = new Set();
     let key = '';
-    const list = mapTargets(now).filter((t) => picked(t) || nearish(t, now)).slice(0, 8);
+    const list = mapTargets(now).filter((t) => (picked(t) || nearish(t, now)) && !fateFor(t)).slice(0, 8); // a lost or downed one: no band, no circle
     for (const t of list) {
       const p = placeOf(t, now);
-      const { to, from } = placesOf(t, p);
+      const { to, from, at } = placesOf(t, p);
       const color = metaOf(t).color;
+      // To the place it heads: a wide soft band, and there a circle of where it may hit, growing with the
+      // time since it was said (the place is a village, the target may turn off a little).
+      if (to) {
+        const z = svgEl('g', { class: 'nep-goal' });
+        z.style.setProperty('--c', color);
+        if (Math.hypot(to.x - p.x, to.y - p.y) > 14 * u) z.appendChild(svgEl('line', { class: 'band', x1: p.x.toFixed(2), y1: p.y.toFixed(2), x2: to.x.toFixed(2), y2: to.y.toFixed(2) }));
+        const min = at ? Math.max(0, (now - at) / 60000) : 0;
+        const km = Math.min(GOAL_MAX_KM, GOAL_KM + min * GOAL_KM_MIN);
+        const r = (km / kmPerUnit).toFixed(3);
+        const c = svgEl('g', { class: 'hit', transform: `translate(${to.x.toFixed(2)} ${to.y.toFixed(2)})` });
+        c.append(svgEl('circle', { class: 'zone', r }), svgEl('circle', { class: 'wave', r }));
+        z.appendChild(c);
+        placeLayer.appendChild(z);
+      }
       for (const [cls, q] of [['to', to], ['from', from]]) {
         if (!q || done.has(cls + q.name)) continue;
         done.add(cls + q.name);
@@ -927,7 +976,6 @@
         const g = svgEl('g', { class: `nep-pl ${cls}` });
         g.style.setProperty('--c', color);
         const far = Math.hypot(q.x - p.x, q.y - p.y) > 14 * u;
-        if (cls === 'to' && far) g.appendChild(svgEl('line', { class: 'ln', x1: p.x.toFixed(2), y1: p.y.toFixed(2), x2: q.x.toFixed(2), y2: q.y.toFixed(2) }));
         if (far) g.appendChild(svgEl('circle', { class: 'dt', cx: q.x.toFixed(2), cy: q.y.toFixed(2), r: ((cls === 'to' ? 3 : 2.4) * u).toFixed(3) }));
         // next to the dot; for a target that sits on the place it heads to, past its badge
         const dx = (far ? 6 : 15) * u;
@@ -1116,19 +1164,20 @@
     };
     for (const t of mapTargets(now)) {
       const pick = wantsTrack(t, now);
-      // Not picked: only a target near you (twice your radius) that nobody said where it goes gets its circle.
+      // Not picked: only a target near you (twice your radius) gets its sector or circle.
       if (!pick && !nearish(t, now)) continue;
+      const fate = (fateFor(t) || {}).fate;
+      if (fate === 'down' || fate === 'left') continue; // "Мінус", "Збили": only the cross on it, nothing around
       const p = placeOf(t, now);
-      if (!pick && p.heading != null) continue;
       if (!inView(v, p.x, p.y)) continue;
       const kind = kindOf(t);
       const fast = FAST.has(kind) && kind !== 'kab';
       const g = svgEl('g', { class: 'nep-trk' + (fast ? ' fast' : '') + (t.id === selected ? ' sel' : '') });
       g.style.setProperty('--c', metaOf(t).color);
+      // Where it came from, in straight legs between its turns: reports a few km to the side are noise.
       const raw = (Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon)).map((q) => project(q.lat, q.lon));
       raw.push(project(t.lat, t.lon), [p.x, p.y]);
-      const pts = [];
-      if (pick) for (const q of raw) if (!pts.length || Math.hypot(q[0] - pts[pts.length - 1][0], q[1] - pts[pts.length - 1][1]) > 0.3) pts.push(q);
+      const pts = pick ? straight(raw, TRAIL_TOL_KM / kmPerUnit) : [];
       let len = 0;
       for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
       const color = metaOf(t).color;
@@ -1148,39 +1197,27 @@
           g.appendChild(svgEl('circle', { class: 'start est', cx: op[0].toFixed(2), cy: op[1].toFixed(2), r: (2.2 * unitsPerPx).toFixed(3) }));
         }
       }
-      if (p.heading != null && pick) {
-        const speed = t.velocity && t.velocity.speedKmh > 0 ? t.velocity.speedKmh : 0;
-        const [maxKm, noSpeedKm] = AHEAD[kind] || [60, 28];
-        const minKm = (BADGE_PX + (fast ? 64 : 30)) * unitsPerPx * kmPerUnit; // always well past the badge
-        const km = Math.max(minKm, speed ? Math.min(maxKm, speed / 5) : noSpeedKm); // about 12 minutes ahead
-        // a course worked out, not reported (from moves, a post's "з …", the front): a wide sector
-        const guessed = ['moves', 'text', 'front'].includes(p.courseBy);
-        const spread = (guessed ? 40 : t.presumptiveCourse || !speed ? 24 : 15) * (fast ? 0.7 : 1);
+      // Where it may get in the next AHEAD_MIN minutes: a soft sector along its course, wider when the course
+      // is only worked out — unless it is known where it heads (drawPlaces: a band to there).
+      if (p.heading != null && fate !== 'lost' && !(destOf(t, p) || {}).name) {
+        const reach = window.NeptunTypes.reachKm ? window.NeptunTypes.reachKm(t, AHEAD_MIN) : 25;
+        const minKm = (BADGE_PX + 26) * unitsPerPx * kmPerUnit; // past the badge
+        const km = Math.max(minKm, Math.min(AHEAD_MAX_KM, Math.max(AHEAD_MIN_KM, reach)));
+        const guessed = ['moves', 'text', 'front'].includes(p.courseBy) || !(t.velocity && t.velocity.speedKmh > 0);
+        const spread = guessed ? 34 : 20;
         const at = (deg, k) => project(...Geo.dest(p.lat, p.lon, deg, k));
         const xy = ([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`;
-        const cone = [[p.x, p.y], at(p.heading - spread, km), at(p.heading - spread / 2, km * 1.04), at(p.heading, km * 1.06), at(p.heading + spread / 2, km * 1.04), at(p.heading + spread, km)];
-        // where it heads: a radar-like beam, bright at the marker and fading out ahead
-        const tipPt = at(p.heading, km * 1.06);
-        const strong = fast || t.id === selected;
-        const beam = '#4fe3ff';
+        const arc = [];
+        for (let i = 0; i <= 8; i++) arc.push(at(p.heading - spread + (i * spread) / 4, km));
+        const tipPt = at(p.heading, km);
         g.appendChild(
           svgEl('polygon', {
-            class: 'to',
-            fill: fade([p.x, p.y], tipPt, [[0, beam, strong ? 0.55 : 0.42], [0.6, beam, strong ? 0.22 : 0.14], [1, beam, 0]]),
-            stroke: fade([p.x, p.y], tipPt, [[0, beam, 1], [0.8, beam, 0.35], [1, beam, 0]]),
-            points: cone.map(xy).join(' '),
+            class: 'ahead' + (pick ? ' sel' : ''),
+            fill: fade([p.x, p.y], tipPt, [[0, color, pick ? 0.34 : 0.22], [1, color, 0.05]]),
+            points: [[p.x, p.y], ...arc].map(xy).join(' '),
           }),
         );
-        g.appendChild(
-          svgEl('line', {
-            class: 'axis',
-            stroke: fade([p.x, p.y], tipPt, [[0, '#ffffff', 1], [1, '#ffffff', 0.1]]),
-            x1: p.x.toFixed(2),
-            y1: p.y.toFixed(2),
-            x2: tipPt[0].toFixed(2),
-            y2: tipPt[1].toFixed(2),
-          }),
-        );
+        g.appendChild(svgEl('line', { class: 'axis', stroke: fade([p.x, p.y], tipPt, [[0, '#ffffff', pick ? 0.9 : 0.55], [1, '#ffffff', 0]]), x1: p.x.toFixed(2), y1: p.y.toFixed(2), x2: tipPt[0].toFixed(2), y2: tipPt[1].toFixed(2) }));
       }
       if (p.heading == null) {
         // No course: it is not standing still, only nobody said where it went. A dashed circle of where it
@@ -1191,16 +1228,49 @@
           const km = Math.min(RANGE_MAX_KM, Math.max(t.uncertaintyKm || 3, min * (RANGE_KM_MIN[kind] || 2.5)));
           const r = km / kmPerUnit;
           g.appendChild(svgEl('circle', { class: 'range' + (pick ? '' : ' quiet'), cx: p.x.toFixed(2), cy: p.y.toFixed(2), r: r.toFixed(3) }));
-          if (pick) {
-            const label = svgEl('text', { class: 'range-t', x: p.x.toFixed(2), y: (p.y - r - 3 * unitsPerPx).toFixed(2), 'font-size': (10 * unitsPerPx).toFixed(3) });
-            label.textContent = `${Math.round(min)} хв без даних · до ${Math.round(km)} км`;
-            g.appendChild(label);
-          }
+          const label = svgEl('text', { class: 'range-t' + (pick ? '' : ' quiet'), x: p.x.toFixed(2), y: (p.y - r - 3 * unitsPerPx).toFixed(2), 'font-size': ((pick ? 10.5 : 9.5) * unitsPerPx).toFixed(3) });
+          label.textContent = `без даних ${Math.round(min)} хв ≈ ${Math.round(km)} км`;
+          g.appendChild(label);
         }
       }
       if (g.childNodes.length) trackLayer.appendChild(g);
     }
   }
+  // The sector ahead: how far it may get in this many minutes, at least / at most (km).
+  const AHEAD_MIN = 10;
+  const AHEAD_MIN_KM = 8;
+  const AHEAD_MAX_KM = 70;
+  const TRAIL_TOL_KM = 2.5; // a trail point this close to the straight leg is dropped
+
+  // The points of a line, keeping only its turns (Douglas–Peucker).
+  function straight(pts, tol) {
+    const clean = [];
+    for (const q of pts) if (!clean.length || Math.hypot(q[0] - clean[clean.length - 1][0], q[1] - clean[clean.length - 1][1]) > 0.3) clean.push(q);
+    if (clean.length < 3) return clean;
+    const keep = new Array(clean.length).fill(false);
+    keep[0] = keep[clean.length - 1] = true;
+    const walk = (a, b) => {
+      let best = -1;
+      let bd = tol;
+      const [x1, y1] = clean[a];
+      const [x2, y2] = clean[b];
+      const len = Math.hypot(x2 - x1, y2 - y1) || 1e-9;
+      for (let i = a + 1; i < b; i++) {
+        const d = Math.abs((x2 - x1) * (y1 - clean[i][1]) - (x1 - clean[i][0]) * (y2 - y1)) / len;
+        if (d > bd) {
+          bd = d;
+          best = i;
+        }
+      }
+      if (best < 0) return;
+      keep[best] = true;
+      walk(a, best);
+      walk(best, b);
+    };
+    walk(0, clean.length - 1);
+    return clean.filter((_, i) => keep[i]);
+  }
+
   // How far a target without a course may have got per minute since its last report, and at most.
   const RANGE_KM_MIN = { uav: 2.5, jet: 7, recon: 2, fpv: 1, kab: 4, missile: 12, ballistic: 30, mig31k: 15, unknown: 2.5 };
   const RANGE_MAX_KM = 60;

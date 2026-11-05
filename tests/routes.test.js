@@ -341,7 +341,7 @@ test('types.predict: the channel course is used when NEPTUN has none, and over N
 
 // ---------- "Зник" and "Збили" ----------
 
-test('"Не спостерігається" keeps the target 5 minutes as lost, "Збили" takes it off at once', () => {
+test('"Не спостерігається" keeps the target 5 minutes as lost, "Збили" 4 minutes with a cross', () => {
   const r = new Routes(window.NeptunBasemapPlaces);
   r.kmPerUnit = KM;
   r.defaultHome = { x: 563.9, y: 326.1 };
@@ -357,7 +357,9 @@ test('"Не спостерігається" keeps the target 5 minutes as lost, 
   r.add([{ channel: '@a', id: 3, date: at(2), text: 'Дрон на Компаніївку', reply: null }], t0 + 120000);
   const [down] = r.add([{ channel: '@a', id: 4, date: at(3), text: 'Збили', reply: { id: 3, text: 'Дрон на Компаніївку' } }], t0 + 180000);
   assert.equal(down.fate, 'down');
-  assert.ok(!r.live(t0 + 180000).some((s) => s.track === down.track), 'shot down: off at once');
+  const dn = r.live(t0 + 180000).find((s) => s.track === down.track);
+  assert.ok(dn && dn.down, 'shot down: still there a few minutes, with a cross');
+  assert.ok(!r.live(t0 + 8 * 60000).some((s) => s.track === down.track), 'and then off');
   const [back] = r.add([{ channel: '@a', id: 5, date: at(4), text: 'Знову до нас - Созонівка', reply: { id: 2, text: 'Зник' } }], t0 + 240000);
   assert.equal(back.track, lost.track, 'a lost one seen again is the same target');
   assert.ok(!back.gone);
@@ -372,4 +374,21 @@ test('a course from the words of a post: "Ракета з Харківщини �
   const h = intel.courseFromText(t);
   assert.ok(h != null && h > 225 && h < 315, `from Kharkiv oblast, west: ${h}`);
   assert.equal(intel.courseFromText({ ...t, id: 'n', locality: 'Суми' }), null, 'no post about it, no course');
+});
+
+test('a target with a course but no speed creeps, it does not race off: at most a few km', () => {
+  global.Geo = Geo;
+  require('../app/neptun/types.js');
+  const T = global.NeptunTypes;
+  T.setCourse(null);
+  const t = { id: 'c', type: 'uav', lat: 48.5, lon: 32.2, heading: 270, updatedAt: '2026-11-04T14:00:00Z', confirmedAt: '2026-11-04T14:00:00Z' };
+  const p = T.predict(t, Date.parse('2026-11-04T14:30:00Z'));
+  assert.ok(p.km > 0 && p.km <= 4, `moved ${p.km} km in 30 min`);
+  assert.equal(T.predict({ ...t, destination: true }, Date.parse('2026-11-04T14:30:00Z')).km, 0, '"курсом на Х" stays on Х');
+  assert.ok(T.reachKm(t, 10) >= 20, 'the sector ahead reaches where it may be in 10 min');
+});
+
+test('"Пропав" is lost too', () => {
+  const read = readAll([P(1, 'Реактивний на Канатове'), P(2, 'Пропав', { reply: { id: 1, text: 'Реактивний на Канатове' } })]);
+  assert.equal(one(read, 2).fate, 'lost');
 });
