@@ -113,9 +113,26 @@
       }
       return { lat: t.lat, lon: t.lon, heading: bearing, km: 0, flying: true, byPosts: newer, courseBy: newer ? c.by : null };
     }
-    if (c && (own == null || newer)) return { lat: t.lat, lon: t.lon, heading: c.heading, km: 0, flying: false, byPosts: true, courseBy: c.by || 'posts' };
-    return { lat: t.lat, lon: t.lon, heading: own, km: 0, flying: false };
+    const byPosts = !!c && (own == null || newer);
+    const heading = byPosts ? c.heading : own;
+    const extra = byPosts ? { byPosts: true, courseBy: c.by || 'posts' } : {};
+    // A course but no speed (most tracks of the open API): it moves at the usual speed of its kind, within the
+    // same limits. Not a point that is only where it heads ("курсом на Х": it is there already), not a lost one.
+    const typical = TYPICAL_KMH[kindOf(t)];
+    const from = Date.parse(t.confirmedAt || t.updatedAt);
+    if (heading != null && typical && from && !t.areaOnly && !t.destination && !t.lost && t.status !== 'stale') {
+      const meta = typeMeta(kindOf(t));
+      const ageMin = (now - from) / 60000;
+      if (ageMin > 0) {
+        const km = Math.min(meta.maxKm, (typical * Math.min(ageMin, meta.horizonMin)) / 60);
+        const [lat, lon] = Geo.dest(t.lat, t.lon, heading, km);
+        return { lat, lon, heading, km, flying: ageMin <= meta.horizonMin && km > 0.05, estSpeed: typical, ...extra };
+      }
+    }
+    return { lat: t.lat, lon: t.lon, heading, km: 0, flying: false, ...extra };
   }
+  // The usual speed of a kind, km/h, for a track with a course and no speed (ballistic and aviation: none).
+  const TYPICAL_KMH = { uav: 150, jet: 450, recon: 120, fpv: 60, missile: 750, kab: 400 };
 
   root.NeptunTypes = { TYPES, ORDER, typeMeta, kindOf, classify, setHint, setCourse, predict };
 })(self);

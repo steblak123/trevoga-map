@@ -577,12 +577,20 @@ body.nep-calm #nep-tip .tt-sr b { color: #a9c7e2; }
 body.nep-calm .nep-targets .h-title { color: var(--calm-ink) !important; }
 
 /* your own point: quiet, the radius only on hover */
-.nep-home .dot { fill: rgba(127, 220, 255, 0.85); stroke: rgba(6, 10, 16, 0.85); }
+.nep-home .dot { fill: #7fdcff; stroke: rgba(6, 10, 16, 0.9); }
 .nep-home .hit { fill: transparent; }
-.nep-home .rad { fill: rgba(127, 220, 255, 0.045); stroke: rgba(150, 230, 255, 0.85); stroke-width: 1.4px; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
-.nep-home.ring .rad { opacity: 0.7; }
-.nep-home .rad.m { fill: rgba(255, 110, 120, 0.025); stroke: rgba(255, 130, 140, 0.8); stroke-width: 1.1px; stroke-dasharray: 2 4; }
-.nep-home.ring .rad.m { opacity: 0.55; }
+/* your zones: clearly seen on any basemap; a dark edge under the line keeps it readable on satellite */
+.nep-home .rad { fill: rgba(127, 220, 255, 0.08); stroke: #8fe6ff; stroke-width: 2px; stroke-dasharray: 7 4; vector-effect: non-scaling-stroke; opacity: 0; pointer-events: none; transition: opacity 0.2s, stroke 0.3s, fill 0.3s;
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.9)); }
+.nep-home .rad.m { fill: rgba(255, 110, 120, 0.05); stroke: #ff8a94; stroke-width: 1.8px; stroke-dasharray: 3 4; }
+.nep-home .rad.hot { fill: rgba(255, 159, 67, 0.14); stroke: #ffb066; }
+.nep-home .rad.m.hot { fill: rgba(255, 77, 87, 0.12); stroke: #ff5a64; }
+.nep-home.ring .rad { opacity: 1; }
+.nep-home .rad-t { fill: #bfeeff; text-anchor: middle; font-family: var(--h-num, sans-serif); font-weight: 600; paint-order: stroke; stroke: rgba(6, 10, 16, 0.9); stroke-width: 3px; stroke-linejoin: round; vector-effect: non-scaling-stroke; opacity: 0; pointer-events: none; }
+.nep-home .rad-t.m { fill: #ffc2c7; }
+.nep-home .rad-t.hot { fill: #ffd09e; }
+.nep-home .rad-t.m.hot { fill: #ff9aa1; }
+.nep-home.ring .rad-t, .nep-home:hover .rad-t { opacity: 1; }
 .nep-home:hover .rad { opacity: 1; }
 body.nep-placing #map, body.nep-placing .nep-marker { cursor: crosshair; }
 #nep-zoom button.on { background: #1f4f6b; color: #fff; border-color: #4fc3f7; }

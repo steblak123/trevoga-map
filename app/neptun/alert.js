@@ -42,7 +42,7 @@ function entry(i) {
   const T = window.NeptunTypes;
   const meta = T.typeMeta(i.type);
   const st = STATUS[i.status] ? i.status : 'unk';
-  const dist = i.vague ? `${DIST}≈${i.km}<small>км</small>` : i.km < 1 ? `${DIST}над районом` : `${DIST}${i.km}<small>км</small>`;
+  const dist = i.vague ? `${DIST}≈${i.km}<small>км</small>` : i.km < 1 ? `${DIST}${i.home ? 'над вами' : 'над районом'}` : `${DIST}${i.km}<small>км</small>`;
   const badges =
     (i.place ? `<span class="h-b place">${PIN}${esc(i.place)}</span>` : '') +
     `<span class="h-b dist">${dist}</span>` +

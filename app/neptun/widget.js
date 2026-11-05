@@ -376,6 +376,7 @@
         sourceCount: 1,
         count: s.count > 1 ? s.count : undefined,
         positionQuality: s.pos.est ? 'approx' : 'confirmed',
+        destination: !!s.pos.est, // "на Канатове": it is coming up to it, not past it
         uncertaintyKm: s.pos.est ? 10 : 5,
         explanationShort: `${s.channel}: ${s.text}`,
         tg: { channel: s.channel, text: s.text, at: s.at },
@@ -572,7 +573,8 @@
 
   // Minutes until a target closing in at a known speed reaches your region.
   function etaMin(t, near) {
-    const speed = t.velocity && t.velocity.speedKmh;
+    // NEPTUN's speed, else the usual one of its kind when it has a course (types.js)
+    const speed = (t.velocity && t.velocity.speedKmh) || (near && near.trend === 'наближається' ? predict(t, Date.now()).estSpeed : 0);
     if (!near || near.km < 0.5 || near.trend !== 'наближається' || !(speed > 0)) return null;
     return Math.max(1, Math.round((near.km / speed) * 60));
   }
@@ -588,8 +590,9 @@
 
   const distBadge = (near) => {
     if (!near) return `<span class="h-b none">${ico('dist')}—</span>`;
-    if (near.km < 0.5) return `<span class="h-b dist">${ico('dist')}над районом</span>`;
-    return `<span class="h-b dist">${ico('dist')}${Math.round(near.km)}<small>км</small></span>`;
+    const from = home ? 'від вашої точки' : 'до межі ваших районів';
+    if (near.km < 0.5) return `<span class="h-b dist" title="${from}">${ico('dist')}${home ? 'над вами' : 'над районом'}</span>`;
+    return `<span class="h-b dist" title="${from}">${ico('dist')}${Math.round(near.km)}<small>км</small></span>`;
   };
   const placeBadge = (text) => `<span class="h-b place">${ico('pin')}${esc(text)}</span>`;
   // "з Пн-Сх → Пд-Зх": where it comes from and where it heads.
@@ -738,7 +741,8 @@
       down: members.every((i) => ['down', 'left'].includes((fateFor(i.t) || {}).fate)),
       tg: members.every((i) => !!i.t.tg),
       vague: members.every((i) => vagueOf(i.t)),
-      dest: members.every((i) => i.t.destination && i.p.angle == null),
+      // "курсом на Х": the point is where it heads, not where it is; a sight there, any kind
+      dest: members.every((i) => i.t.destination),
       sel: members.length === 1 && lead.t.id === selected,
       group: members.length > 1,
     };
@@ -807,12 +811,26 @@
     if (!home || !opts.markers || !unitsPerPx) return;
     const u = unitsPerPx;
     const g = svgEl('g', { class: 'nep-home ui' + (opts.homeRing ? ' ring' : ''), transform: `translate(${home.x.toFixed(3)} ${home.y.toFixed(3)})` });
-    // The drones' radius, and the missiles' one (thinner, sparser dashes) when it differs.
-    if (opts.alertKmMissile !== opts.alertKm) g.append(svgEl('circle', { class: 'rad m', r: (opts.alertKmMissile / kmPerUnit).toFixed(3) }));
+    // Your zones: the drones' radius and the missiles' one, each with its distance written on top; a zone a
+    // target is in turns orange (drones) or red (missiles).
+    const inZone = { d: false, m: false };
+    for (const id of inside.keys()) {
+      const t = getTarget(id);
+      if (t) inZone[MISSILES.has(kindOf(t)) ? 'm' : 'd'] = true;
+    }
+    const zone = (km, cls, label) => {
+      const r = km / kmPerUnit;
+      g.append(svgEl('circle', { class: `rad ${cls}`, r: r.toFixed(3) }));
+      const text = svgEl('text', { class: `rad-t ${cls}`, y: (-r - 3 * u).toFixed(3), 'font-size': (10.5 * u).toFixed(3) });
+      text.textContent = label;
+      g.append(text);
+    };
+    const two = opts.alertKmMissile !== opts.alertKm;
+    if (two) zone(opts.alertKmMissile, 'm' + (inZone.m ? ' hot' : ''), `${opts.alertKmMissile} км · ракети`);
+    zone(opts.alertKm, 'd' + (inZone.d || (!two && inZone.m) ? ' hot' : ''), two ? `${opts.alertKm} км · дрони` : `${opts.alertKm} км`);
     g.append(
-      svgEl('circle', { class: 'rad', r: ((opts.alertKm / kmPerUnit)).toFixed(3) }),
       svgEl('circle', { class: 'hit', r: (9 * u).toFixed(3) }),
-      svgEl('circle', { class: 'dot', r: (3 * u).toFixed(3), 'stroke-width': (1.2 * u).toFixed(3) }),
+      svgEl('circle', { class: 'dot', r: (3.2 * u).toFixed(3), 'stroke-width': (1.4 * u).toFixed(3) }),
     );
     homeLayer.appendChild(g);
   }
@@ -1196,6 +1214,7 @@
         place: placeShort(t),
         km: Math.round(near.km),
         vague: !!vagueOf(t), // "Кропивницький р-н": the distance is a rough one
+        home: !!home, // the distance is from your point
         src: t.tg ? t.tg.channel : '', // only your channel has it so far
         name: shortName(near.name),
         trend: near.trend || '',
@@ -1262,7 +1281,7 @@
       `<div class="h-kv">` +
       `<span class="h-k">Статус</span><span class="h-v">${statusCell(main, now)}${otherAlerts ? `<span class="h-b h-st alert">+${otherAlerts}</span>` : ''}</span>` +
       `<span class="h-k">Найближча</span><span class="h-v">${best ? `${typeChip(kindOf(best.t))}<span class="h-tname" style="--c:${metaOf(best.t).color}">${esc(nameText(best.t))}</span>` : '<span class="h-b none">немає</span>'}</span>` +
-      `<span class="h-k">Відстань</span><span class="h-v">${distBadge(best && best.near)}</span>` +
+      `<span class="h-k">${home ? 'Від точки' : 'Відстань'}</span><span class="h-v">${distBadge(best && best.near)}</span>` +
       `<span class="h-k">Напрямок</span><span class="h-v">${dir == null ? `<span class="h-b none">—</span>` : `<span class="h-b dir">${arrowIco(dir)}${compass8(dir)}</span>`}</span>` +
       `<span class="h-k">ETA</span><span class="h-v">${eta == null ? `<span class="h-b none">${ico('clock')}—</span>` : etaBadge(eta)}</span>` +
       `<span class="h-k">Ризик</span><span class="h-v"><span class="h-risk l${risk}"><span class="seg"><i></i><i></i><i></i></span>${RISK[risk]}</span></span>` +
@@ -1296,7 +1315,7 @@
   function nearPanelHtml(now) {
     const close = closeTargets(now).map((x) => x.t);
     targetsEl.dataset.near = close.length ? '1' : '0';
-    const head = `<div class="h-head">${ico('radar')}<span class="h-title">Поблизу ваших районів</span>${countChip(close.length, TARGET_WORD)}${liveHtml()}</div>`;
+    const head = `<div class="h-head">${ico('radar')}<span class="h-title">${home ? 'Поблизу вашої точки' : 'Поблизу ваших районів'}</span>${countChip(close.length, TARGET_WORD)}${liveHtml()}</div>`;
     if (!hasBase()) return head + `<div class="h-empty">Райони не обрано</div>`;
     if (close.length >= FULL_ROWS) return head + listHtml(close, now);
     // Room left: the next nearest targets beyond the radius, under a quiet divider.
@@ -1331,7 +1350,7 @@
     else if (vg && vg.raion) note = 'Десь у районі';
     else if (vg) note = `Приблизно, ±${Math.round(vg.km)} км`;
     else if (t.destination) note = 'Розрахункова позиція';
-    else if (p.flying && p.km > 0.5) note = `За курсом +${Math.round(p.km)} км`;
+    else if (p.flying && p.km > 0.5) note = `За курсом +${Math.round(p.km)} км${p.estSpeed ? ' (оцінка)' : ''}`;
     else if (t.advisory) note = 'Спостереження';
     else if (t.status === 'stale') note = 'Застарілі дані';
     const course =

@@ -76,7 +76,7 @@
         <label class="row"><input type="radio" name="nep-side" value="left"> ліворуч</label>
         <label class="row"><input type="radio" name="nep-side" value="right"> праворуч</label>
       </div>
-      <label class="row"><input type="checkbox" id="nep-alert"> Сповіщати, коли до ваших районів ближче ніж</label>
+      <label class="row"><input type="checkbox" id="nep-alert"> Сповіщати, коли до вашої точки (без неї — до ваших районів) ближче ніж</label>
       <div class="inline" style="padding:2px 0 2px 24px">
         <span class="hint">дрони</span>
         <select id="nep-alertKm">${RADII.map((km) => `<option value="${km}">${km} км</option>`).join('')}</select>
