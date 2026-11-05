@@ -362,3 +362,14 @@ test('"Не спостерігається" keeps the target 5 minutes as lost, 
   assert.equal(back.track, lost.track, 'a lost one seen again is the same target');
   assert.ok(!back.gone);
 });
+
+test('a course from the words of a post: "Ракета з Харківщини курсом на Полтаву"', () => {
+  const intel = new Intel();
+  intel.setPlaces(window.NeptunBasemapPlaces, Geo.mapProjector(MAP.proj), KM, null);
+  const now = Date.parse('2026-11-04T14:03:00Z');
+  intel.add([{ channel: '@x', date: '2026-11-04T14:01:00Z', text: 'Ракета з Харківщини курсом на Полтаву' }], now);
+  const t = { id: 'm', type: 'missile', lat: 49.59, lon: 34.55, heading: null, locality: 'Полтава', region: 'Полтавська область', updatedAt: '2026-11-04T14:02:00Z', destination: true };
+  const h = intel.courseFromText(t);
+  assert.ok(h != null && h > 225 && h < 315, `from Kharkiv oblast, west: ${h}`);
+  assert.equal(intel.courseFromText({ ...t, id: 'n', locality: 'Суми' }), null, 'no post about it, no course');
+});

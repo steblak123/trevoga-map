@@ -230,6 +230,29 @@
       return null;
     }
 
+    // A course from the words of the posts about the track: "Ракета з Харківщини курсом на Полтаву", "КАБ від
+    // Вовчанська на Харків" — from the place or region named after "з", "від" towards the track. Degrees or null.
+    courseFromText(t) {
+      if (!this.routes || !this.project || !Number.isFinite(t.lat)) return null;
+      const Routes = this.routes.constructor;
+      const [x, y] = this.project(t.lat, t.lon);
+      const here = { x, y };
+      const texts = [t.title, t.explanationShort, ...this.mentions(t).map((m) => m.text)];
+      for (const text of texts) {
+        if (!text) continue;
+        for (const line of String(text).split(/\n+/)) {
+          const from = Routes.placesIn(line, this.routes.gaz).find((g) => g.role === 'from');
+          if (!from) continue;
+          const p = from.region ? from.center : this.routes.point(from, here, here);
+          if (!p) continue;
+          const km = Math.hypot(p.x - x, p.y - y) * this.kmPerUnit;
+          if (km < 15 || km > 600) continue;
+          return ((Math.atan2(x - p.x, p.y - y) * 180) / Math.PI + 360) % 360;
+        }
+      }
+      return null;
+    }
+
     // The channel route of a track: the latest sighting near it that has a route, as
     // { channel, at, heading, points: [{ name, at }] } (oldest first), or null.
     routeOf(t, maxAgeMs = 12 * 60000) {

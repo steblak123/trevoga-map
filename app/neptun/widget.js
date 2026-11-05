@@ -66,15 +66,33 @@
   });
 
   // Tracks take the course of your channels' route near them (10 min fresh): when NEPTUN has none, or when the post is newer.
+  // Worked out once per track update, new posts or 5 s (predict() asks for it many times a frame).
+  const courseCache = new Map();
   if (window.NeptunTypes.setCourse) {
     window.NeptunTypes.setCourse((t) => {
+      const k = `${t.updatedAt}|${t.lat},${t.lon}|${intel ? intel.version : 0}|${clientRev}|${Math.floor(Date.now() / 5000)}`;
+      const c = courseCache.get(t.id);
+      if (c && c.k === k) return c.v;
+      const v = courseFor(t);
+      if (courseCache.size > 3000) courseCache.clear();
+      courseCache.set(t.id, { k, v });
+      return v;
+    });
+  }
+  function courseFor(t) {
+    {
       if (vagueOf(t)) return null; // a raion-level point is too rough to match
       const r = intel && intel.routes ? intel.routeOf(t, 10 * 60000) : null;
       if (r && r.heading != null && r.points.length >= 2) return { heading: r.heading, at: r.at, by: 'posts' };
       if (t.tg || t.heading != null) return null;
+      // Never over NEPTUN's own course (at: 0): how it moved; the post's "з Харківщини"; a KAB from the front.
       const h = courseByMoves(t);
-      return h == null ? null : { heading: h, at: 0, by: 'moves' }; // never over NEPTUN's own course
-    });
+      if (h != null) return { heading: h, at: 0, by: 'moves' };
+      const x = intel ? intel.courseFromText(t) : null;
+      if (x != null) return { heading: x, at: 0, by: 'text' };
+      const f = kindOf(t) === 'kab' ? courseFromFront(t) : null;
+      return f == null ? null : { heading: f, at: 0, by: 'front' };
+    }
   }
 
   let opts = { ...DEFAULTS, markers: false }; // applySettings() starts the client if enabled
@@ -424,6 +442,26 @@
     }
     if (moves.size > 3000) for (const id of moves.keys()) if (!client.threats.has(id)) moves.delete(id);
   }
+  // A KAB is dropped from beyond the front line and glides up to ~90 km: without a course, it comes from the
+  // nearest of these points (the line and the border, roughly), an estimate.
+  const FRONT = [
+    [51.95, 33.9], [51.45, 34.6], [51.2, 35.4], [50.7, 36.2], [50.4, 37.3], [49.95, 37.9], [49.5, 38.2], [49.0, 37.9],
+    [48.6, 37.9], [48.25, 37.6], [47.95, 37.3], [47.7, 36.9], [47.5, 36.2], [47.4, 35.6], [47.3, 35.1], [46.9, 34.0],
+    [46.75, 33.4], [46.6, 32.9], [46.45, 32.3],
+  ];
+  function courseFromFront(t) {
+    let best = null;
+    let bd = Infinity;
+    for (const [la, lo] of FRONT) {
+      const d = Geo.distanceKm(la, lo, t.lat, t.lon);
+      if (d < bd) {
+        bd = d;
+        best = [la, lo];
+      }
+    }
+    return best && bd > 5 && bd < 150 ? Geo.bearing(best[0], best[1], t.lat, t.lon) : null;
+  }
+  const COURSE_BY = { posts: 'за каналом', moves: 'оцінка за рухом', text: 'за повідомленням', front: 'оцінка: від фронту' };
   const MAX_KMH = { uav: 260, jet: 900, recon: 220, fpv: 150, kab: 900, missile: 1100, ballistic: 4000, mig31k: 2500, unknown: 900 };
   function courseByMoves(t) {
     const pts = [...(Array.isArray(t.trail) ? t.trail : []).map((q) => ({ lat: q.lat, lon: q.lon, at: Date.parse(q.t) || 0 })), ...(moves.get(t.id) || [])]
@@ -1356,7 +1394,7 @@
     const course =
       p.heading == null
         ? `<span class="h-b none">—</span>`
-        : `<span class="h-b dir">${arrowIco(p.angle == null ? p.heading : p.angle)}на ${compass8(p.heading)}<small>${Math.round(p.heading)}°</small></span>${p.byPosts ? `<small>${p.courseBy === 'moves' ? 'оцінка за рухом' : 'за каналом'}</small>` : ''}`;
+        : `<span class="h-b dir">${arrowIco(p.angle == null ? p.heading : p.angle)}на ${compass8(p.heading)}<small>${Math.round(p.heading)}°</small></span>${p.byPosts ? `<small>${COURSE_BY[p.courseBy] || 'за каналом'}</small>` : ''}`;
     const o = originOf(t, now);
     const from = o ? `<span class="h-b dir">з ${compass8(o.bearing)}</span><small>${esc(originText(o))}${o.est ? ' · оцінка' : ''}</small>` : '—';
     const eta = etaMin(t, near);
@@ -1582,7 +1620,7 @@
   // ---------- selection ----------
 
   function select(id) {
-    selected = id && client.threats.has(id) ? id : null;
+    selected = id && getTarget(id) ? id : null; // NEPTUN's or one only your channel has (tg:…)
     group = null;
     hideTip();
     refresh();
