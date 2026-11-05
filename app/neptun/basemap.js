@@ -283,7 +283,7 @@
     if (!labels || !ctm) return;
     const boxes = [];
     // Region names and target markers stay readable: the names keep off them.
-    for (const t of document.querySelectorAll('#labels text, .nep-marker, .nep-boom')) {
+    for (const t of document.querySelectorAll('#labels text, .nep-marker, .nep-boom, #nep-places text')) {
       const b = t.getBoundingClientRect();
       if (b.width && t.style.display !== 'none') boxes.push([b.left - 3, b.top - 2, b.right + 3, b.bottom + 2]);
     }
@@ -393,6 +393,7 @@
       under.prepend(defs);
     }
     svg.addEventListener('nep-zoom', schedule);
+    svg.addEventListener('nep-labels', schedule); // the targets' place names (widget.js) changed
     addEventListener('resize', schedule);
     window.bridge.getSettings().then(apply);
     window.bridge.onSettings(apply);

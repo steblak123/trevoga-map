@@ -302,7 +302,7 @@
       const close = pts.filter((p) => dist(p, pts[0]) * this.kmPerUnit < 35);
       const x = close.reduce((s, p) => s + p.x, 0) / close.length;
       const y = close.reduce((s, p) => s + p.y, 0) / close.length;
-      return { x, y, name: group.names.join('/'), rank: Math.min(...close.map((p) => p.rank)) };
+      return { x, y, name: close.map((p) => p.name).join('/'), said: group.names.join('/'), rank: Math.min(...close.map((p) => p.rank)) };
     }
 
     learnHome(st, p) {

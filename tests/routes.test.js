@@ -230,7 +230,7 @@ test('@povitryanatrivogaaa: "✈️Кіровоградщина:" headers, "→�
   assert.equal(a.pos.name, 'Кропивницький');
   assert.equal(a.from, 'Дніпропетровщина');
   assert.equal(b.count, 2);
-  assert.equal(b.pos.name, 'П\'ятихатки');
+  assert.equal(b.pos.name, 'П’ятихатки'); // the gazetteer's name
   const c = one(read, 20);
   assert.equal(c.kind, 'kab');
   assert.match(c.pos.name, /Затока/);

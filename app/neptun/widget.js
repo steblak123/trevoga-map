@@ -131,7 +131,8 @@
   const boomLayer = svgEl('g', { id: 'nep-booms' }); // explosions named in the channel posts
   const homeLayer = svgEl('g', { id: 'nep-home' }); // your own point
   const markerLayer = svgEl('g', { id: 'nep-markers' });
-  layer.append(areaLayer, trackLayer, selLayer, leadLayer, boomLayer, homeLayer, markerLayer);
+  const placeLayer = svgEl('g', { id: 'nep-places' }); // where the targets near you head and come from
+  layer.append(areaLayer, trackLayer, selLayer, leadLayer, boomLayer, homeLayer, placeLayer, markerLayer);
   svg.appendChild(layer);
 
   // Under the map, above the PC load tiles: the dock (region card + targets panel) and the count tiles.
@@ -266,6 +267,7 @@
     if (vg && vg.raion) return raionShort(vg.raion);
     if (seaOf(t)) return 'над морем';
     if (t.destination && t.locality) return `→ ${t.locality}`;
+    if (t.toward && t.locality) return `${t.locality} → ${t.toward}`; // two of your channels: where it is, where it heads
     return t.locality || shortName(t.district || t.region || '');
   }
 
@@ -354,6 +356,8 @@
   const TG_TYPE = { jet: 'uav', plain: 'uav', missile: 'missile', kab: 'kab', recon: 'recon', fpv: 'fpv' };
   const TG_FRESH_MIN = { jet: 5, missile: 3, kab: 3 }; // others 8
   const TG_SAME_KM = 25;
+  const TG_MERGE_KM = 20; // two of your channels about one target: this close…
+  const TG_MERGE_MIN = 6; // …and this soon after each other
   let tgCache = { k: '', list: [] };
   let clientRev = 0;
   function channelTargets() {
@@ -363,7 +367,10 @@
     if (tgCache.k === k) return tgCache.list;
     const un = Geo.mapUnprojector(projDef);
     const neptun = client.list().filter((t) => !t.areaOnly && Number.isFinite(t.lat));
-    const list = [];
+    // The sightings NEPTUN has not got, then one target for those of several channels about the same one
+    // (within TG_MERGE_KM and TG_MERGE_MIN of each other): "@krop_vanek: … Ганнівка" and "@shpk_krop: Зайшов
+    // в область, Ганнівка" are one jet with two sources.
+    const cands = [];
     for (const s of intel.routes.live(now, 8 * 60000)) {
       if (!intel.trusted.has(String(s.channel).toLowerCase())) continue;
       if (now - s.at > (TG_FRESH_MIN[s.kind] || 8) * 60000) continue;
@@ -376,29 +383,67 @@
         return Geo.distanceKm(p.lat, p.lon, lat, lon) <= TG_SAME_KM;
       });
       if (known) continue;
-      const iso = new Date(s.at).toISOString();
+      const tr = intel.routes.track(s.channel, s.track);
+      // its way over the last minutes (map units): two channels about one target meet somewhere on it, though
+      // one says where it is ("Бокове") and the other where it heads ("→Братолюбівка")
+      const path = (tr ? tr.points : []).filter((q) => s.at - q.at <= 10 * 60000).map((q) => ({ x: q.x, y: q.y }));
+      path.push({ x: s.pos.x, y: s.pos.y });
+      cands.push({ s, lat, lon, type, missile, path, first: tr && tr.points.length ? tr.points[0].at : s.at });
+    }
+    const meet = (a, b) => {
+      const lim = (a.s.pos.est || b.s.pos.est ? TG_MERGE_KM + 8 : TG_MERGE_KM) / kmPerUnit;
+      return a.path.some((p) => b.path.some((q) => Math.hypot(p.x - q.x, p.y - q.y) <= lim));
+    };
+    cands.sort((a, b) => b.s.at - a.s.at);
+    const groups = [];
+    for (const c of cands) {
+      const g = groups.find(
+        (g) =>
+          g[0].missile === c.missile &&
+          g.some((o) => o.s.channel !== c.s.channel && Math.abs(o.s.at - c.s.at) <= TG_MERGE_MIN * 60000 && meet(o, c)),
+      );
+      if (g) g.push(c);
+      else groups.push([c]);
+    }
+    const list = [];
+    for (const g of groups) {
+      // Where it is: the newest real point ("Бокове"), not a "→Братолюбівка" of a minute later, which is where
+      // it heads: then the course goes there.
+      const newest = g[0];
+      const real = g.find((c) => !c.s.pos.est && newest.s.at - c.s.at <= 4 * 60000);
+      const top = real || newest;
+      const s = top.s;
+      const toward = newest !== top && newest.s.pos.est ? newest : null;
+      const oldest = g.reduce((a, b) => (b.first < a.first ? b : a)); // its id stays when another channel joins
+      const jet = g.some((c) => c.s.kind === 'jet');
+      const type = jet ? 'uav' : top.type;
+      let heading = s.heading != null ? s.heading : (g.find((c) => c.s.heading != null) || { s: {} }).s.heading;
+      if (toward && Geo.distanceKm(top.lat, top.lon, toward.lat, toward.lon) >= 3) heading = Geo.bearing(top.lat, top.lon, toward.lat, toward.lon);
+      const channels = [...new Set(g.map((c) => c.s.channel))];
+      const iso = new Date(newest.s.at).toISOString(); // as fresh as the latest word of any of them
       list.push({
-        id: 'tg:' + s.track,
+        id: 'tg:' + oldest.s.track,
         type,
-        subtype: s.kind === 'jet' ? 'jet' : undefined,
-        title: typeMeta(s.kind === 'jet' ? 'jet' : type).short,
-        lat,
-        lon,
-        heading: s.heading,
+        subtype: jet ? 'jet' : undefined,
+        title: typeMeta(jet ? 'jet' : type).short,
+        lat: top.lat,
+        lon: top.lon,
+        heading: heading == null ? null : heading,
         locality: s.pos.name.split('/')[0],
         region: '',
         district: '',
+        toward: toward ? toward.s.pos.name.split('/')[0] : '',
         updatedAt: iso,
         confirmedAt: iso,
         status: 'active',
-        sourceCount: 1,
-        count: s.count > 1 ? s.count : undefined,
+        sourceCount: channels.length,
+        count: Math.max(...g.map((c) => c.s.count || 1)) > 1 ? Math.max(...g.map((c) => c.s.count || 1)) : undefined,
         positionQuality: s.pos.est ? 'approx' : 'confirmed',
         destination: !!s.pos.est, // "на Канатове": it is coming up to it, not past it
         uncertaintyKm: s.pos.est ? 10 : 5,
-        explanationShort: `${s.channel}: ${s.text}`,
-        tg: { channel: s.channel, text: s.text, at: s.at },
-        lost: s.lost ? s.at : 0, // "Зник": stays a few minutes, faint
+        explanationShort: g.map((c) => `${c.s.channel}: ${c.s.text}`).join(' · '),
+        tg: { channel: channels.join(', '), channels, text: s.text, at: s.at },
+        lost: g.every((c) => c.s.lost) ? s.at : 0, // "Зник": stays a few minutes, faint
       });
     }
     tgCache = { k, list };
@@ -834,6 +879,69 @@
     drawSelection(now);
     drawBooms(now);
     drawHome();
+    drawPlaces(now);
+  }
+
+  // ---------- where a target heads and where it came from, written on the map ----------
+  // For the picked target and those near you (twice your radius): the town it heads to, bold, with a dot and a
+  // thin dashed line from the target, and the one it came from, quieter. Readable without zooming in; the
+  // basemap's own names keep off them.
+  let placesKey = '';
+  function placesOf(t, p) {
+    const r = intel && intel.routes ? intel.routeOf(t) : null;
+    const here = { x: p.x, y: p.y };
+    const find = (name) => {
+      if (!name || !intel || !intel.routes) return null;
+      const q = intel.routes.pick(intel.routes.gaz.byName(name), here, null);
+      return q && Math.hypot(q.x - p.x, q.y - p.y) * kmPerUnit < 150 ? q : null;
+    };
+    let to = null;
+    const toName = t.toward || (r && r.to) || (t.destination ? t.locality : null);
+    if (t.destination && toName === t.locality) {
+      const [x, y] = project(t.lat, t.lon);
+      to = { x, y, name: t.locality };
+    } else to = find(toName);
+    let from = null;
+    if (r && r.points.length >= 2) {
+      const prev = r.points[r.points.length - 2];
+      if (prev && Math.hypot(prev.x - p.x, prev.y - p.y) * kmPerUnit < 150) from = { x: prev.x, y: prev.y, name: prev.name.split('/')[0] };
+    }
+    if (from && to && from.name === to.name) from = null;
+    return { to, from };
+  }
+  function drawPlaces(now) {
+    placeLayer.textContent = '';
+    if (!opts.markers || !unitsPerPx || !project) return;
+    const u = unitsPerPx;
+    const done = new Set();
+    let key = '';
+    const list = mapTargets(now).filter((t) => picked(t) || nearish(t, now)).slice(0, 8);
+    for (const t of list) {
+      const p = placeOf(t, now);
+      const { to, from } = placesOf(t, p);
+      const color = metaOf(t).color;
+      for (const [cls, q] of [['to', to], ['from', from]]) {
+        if (!q || done.has(cls + q.name)) continue;
+        done.add(cls + q.name);
+        key += cls + q.name + '|';
+        const g = svgEl('g', { class: `nep-pl ${cls}` });
+        g.style.setProperty('--c', color);
+        const far = Math.hypot(q.x - p.x, q.y - p.y) > 14 * u;
+        if (cls === 'to' && far) g.appendChild(svgEl('line', { class: 'ln', x1: p.x.toFixed(2), y1: p.y.toFixed(2), x2: q.x.toFixed(2), y2: q.y.toFixed(2) }));
+        if (far) g.appendChild(svgEl('circle', { class: 'dt', cx: q.x.toFixed(2), cy: q.y.toFixed(2), r: ((cls === 'to' ? 3 : 2.4) * u).toFixed(3) }));
+        // next to the dot; for a target that sits on the place it heads to, past its badge
+        const dx = (far ? 6 : 15) * u;
+        const text = svgEl('text', { x: (q.x + dx).toFixed(2), y: (q.y + (far ? 4 : -10) * u).toFixed(2), 'font-size': ((cls === 'to' ? 12.5 : 11) * u).toFixed(3) });
+        text.textContent = cls === 'to' ? `→ ${q.name}` : q.name;
+        g.appendChild(text);
+        placeLayer.appendChild(g);
+      }
+    }
+    // the basemap names step aside when ours change
+    if (key !== placesKey) {
+      placesKey = key;
+      svg.dispatchEvent(new CustomEvent('nep-labels'));
+    }
   }
 
   // ---------- your point ----------
@@ -982,6 +1090,11 @@
   }
   const showsFrom = (t) => picked(t);
   const wantsTrack = (t) => picked(t);
+  // Within twice your radius (or in it): worth its "where it may be" circle without a click.
+  const nearish = (t, now) => {
+    const near = nearOf(t, now);
+    return !!near && near.km <= radiusOf(t) * 2;
+  };
 
   // Where each target came from (reported trail up to its position now) and where it heads:
   // a translucent sector, wider when the course is only an estimate.
@@ -1002,8 +1115,11 @@
       return `url(#${id})`;
     };
     for (const t of mapTargets(now)) {
-      if (!wantsTrack(t, now)) continue;
+      const pick = wantsTrack(t, now);
+      // Not picked: only a target near you (twice your radius) that nobody said where it goes gets its circle.
+      if (!pick && !nearish(t, now)) continue;
       const p = placeOf(t, now);
+      if (!pick && p.heading != null) continue;
       if (!inView(v, p.x, p.y)) continue;
       const kind = kindOf(t);
       const fast = FAST.has(kind) && kind !== 'kab';
@@ -1012,7 +1128,7 @@
       const raw = (Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon)).map((q) => project(q.lat, q.lon));
       raw.push(project(t.lat, t.lon), [p.x, p.y]);
       const pts = [];
-      for (const q of raw) if (!pts.length || Math.hypot(q[0] - pts[pts.length - 1][0], q[1] - pts[pts.length - 1][1]) > 0.3) pts.push(q);
+      if (pick) for (const q of raw) if (!pts.length || Math.hypot(q[0] - pts[pts.length - 1][0], q[1] - pts[pts.length - 1][1]) > 0.3) pts.push(q);
       let len = 0;
       for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
       const color = metaOf(t).color;
@@ -1021,7 +1137,7 @@
         const stroke = fade(pts[0], pts[pts.length - 1], [[0, color, 0.15], [1, color, 1]]);
         g.appendChild(svgEl('polyline', { class: 'from', stroke, points: pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ') }));
         g.appendChild(svgEl('circle', { class: 'start', cx: pts[0][0].toFixed(2), cy: pts[0][1].toFixed(2), r: (2.2 * unitsPerPx).toFixed(3) }));
-      } else if (showsFrom(t, now)) {
+      } else if (pick && showsFrom(t, now)) {
         // no reported trail: an estimate back along the course, dashed, for the picked target and
         // every target in or near your regions
         const o = originOf(t, now);
@@ -1032,12 +1148,14 @@
           g.appendChild(svgEl('circle', { class: 'start est', cx: op[0].toFixed(2), cy: op[1].toFixed(2), r: (2.2 * unitsPerPx).toFixed(3) }));
         }
       }
-      if (p.heading != null) {
+      if (p.heading != null && pick) {
         const speed = t.velocity && t.velocity.speedKmh > 0 ? t.velocity.speedKmh : 0;
         const [maxKm, noSpeedKm] = AHEAD[kind] || [60, 28];
         const minKm = (BADGE_PX + (fast ? 64 : 30)) * unitsPerPx * kmPerUnit; // always well past the badge
         const km = Math.max(minKm, speed ? Math.min(maxKm, speed / 5) : noSpeedKm); // about 12 minutes ahead
-        const spread = (t.presumptiveCourse || !speed ? 24 : 15) * (fast ? 0.7 : 1);
+        // a course worked out, not reported (from moves, a post's "з …", the front): a wide sector
+        const guessed = ['moves', 'text', 'front'].includes(p.courseBy);
+        const spread = (guessed ? 40 : t.presumptiveCourse || !speed ? 24 : 15) * (fast ? 0.7 : 1);
         const at = (deg, k) => project(...Geo.dest(p.lat, p.lon, deg, k));
         const xy = ([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`;
         const cone = [[p.x, p.y], at(p.heading - spread, km), at(p.heading - spread / 2, km * 1.04), at(p.heading, km * 1.06), at(p.heading + spread / 2, km * 1.04), at(p.heading + spread, km)];
@@ -1072,10 +1190,12 @@
         if (min >= 1) {
           const km = Math.min(RANGE_MAX_KM, Math.max(t.uncertaintyKm || 3, min * (RANGE_KM_MIN[kind] || 2.5)));
           const r = km / kmPerUnit;
-          g.appendChild(svgEl('circle', { class: 'range', cx: p.x.toFixed(2), cy: p.y.toFixed(2), r: r.toFixed(3) }));
-          const label = svgEl('text', { class: 'range-t', x: p.x.toFixed(2), y: (p.y - r - 3 * unitsPerPx).toFixed(2), 'font-size': (10 * unitsPerPx).toFixed(3) });
-          label.textContent = `${Math.round(min)} хв без даних · до ${Math.round(km)} км`;
-          g.appendChild(label);
+          g.appendChild(svgEl('circle', { class: 'range' + (pick ? '' : ' quiet'), cx: p.x.toFixed(2), cy: p.y.toFixed(2), r: r.toFixed(3) }));
+          if (pick) {
+            const label = svgEl('text', { class: 'range-t', x: p.x.toFixed(2), y: (p.y - r - 3 * unitsPerPx).toFixed(2), 'font-size': (10 * unitsPerPx).toFixed(3) });
+            label.textContent = `${Math.round(min)} хв без даних · до ${Math.round(km)} км`;
+            g.appendChild(label);
+          }
         }
       }
       if (g.childNodes.length) trackLayer.appendChild(g);
@@ -1914,7 +2034,7 @@
   if (intel) intel.onUpdate(() => opts.markers && renderAll()); // new posts can change jet / plain
   // Your own Telegram channels: main.js reads them and sends the posts back.
   if (ipc && intel) ipc.on('tg-posts', (posts) => intel.addExternal(posts));
-  window.NeptunDebug = { intel, client }; // for checking from DevTools: NeptunDebug.intel.posts
+  window.NeptunDebug = { intel, client, channelTargets: () => channelTargets() }; // for checking from DevTools: NeptunDebug.intel.posts
 
   client.subscribe((kind) => {
     if (kind === 'data') {
