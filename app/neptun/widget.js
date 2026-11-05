@@ -2056,7 +2056,7 @@
     if (mk && mk.dataset.ids && !svg.classList.contains('nep-panning')) {
       const list = mk.dataset.ids.split(',').map((id) => getTarget(id)).filter(Boolean);
       setHover(list.length === 1 ? list[0].id : null);
-      if (list.length === 1 && list[0].id !== selected) return showTip(targetTip(list[0], now, mk.classList.contains('edge')), ev);
+      if (list.length === 1) return showTip(targetTip(list[0], now, mk.classList.contains('edge')), ev);
       if (list.length > 1) return showTip(listTip(`Група ×${sumSize(list)}`, list.sort(bySeverity), now), ev);
     } else setHover(null);
     const bm = ev.target.closest && ev.target.closest('.nep-boom');
@@ -2073,7 +2073,12 @@
     if (el.classList.contains('nep-close')) return select(null);
     if (el.classList.contains('nep-marker')) {
       const ids = (el.dataset.ids || '').split(',').filter(Boolean);
-      if (ids.length === 1) return select(ids[0] === selected ? null : ids[0]);
+      if (ids.length === 1) {
+        select(ids[0] === selected ? null : ids[0]);
+        const t = getTarget(ids[0]);
+        if (t) showTip(targetTip(t, Date.now(), el.classList.contains('edge')), ev); // the info stays on the map
+        return;
+      }
       const same = group && ids.length === group.length && ids.every((id) => group.includes(id));
       return same ? select(null) : selectGroup(ids);
     }
