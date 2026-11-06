@@ -264,8 +264,12 @@
     routeOf(t, maxAgeMs = 12 * 60000) {
       const s = this.near(t).find((x) => x.route.track && Date.now() - x.at <= maxAgeMs);
       if (!s) return null;
+      // The track is matched by an older point of its way, but what it says now is its latest word: NEPTUN
+      // lags behind the channel, which has already written "→Димине" while the match was "Червоновершка".
+      const last = this.routes.lastOf(s.route.track) || s.route;
       const points = this.routes.route(s.route.track).filter((p, i, a) => !i || p.name !== a[i - 1].name);
-      return { channel: s.channel, at: s.at, heading: s.route.heading, kind: s.route.kind, points, to: s.route.to };
+      const to = last.to || (last.pos && last.pos.est ? last.pos.name : null);
+      return { channel: last.channel, at: last.at, heading: last.heading, kind: last.kind, points, to };
     }
 
     changed() {
