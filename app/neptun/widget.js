@@ -12,7 +12,7 @@
   const ipc = bridge.neptun || null; // preload.js hook; without it there is no banner
   // Projection of app/assets/map.json (see build/make-map.js), for a map.json without "proj".
   const DEFAULT_PROJ = { lat1: 45, lat2: 51, lat0: 48.5, lon0: 31.5, x0: -690178, y1: 432316, k: 0.000755630581276381 };
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertKmMissile: 50, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [], tgTargets: true };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertKmMissile: 50, fastKm: 50, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [], tgTargets: true };
   const BADGE_PX = 9; // marker radius on screen
   const CLUSTER_PX = 15; // markers closer than this on screen become one "×N" marker
   const EDGE_PAD_PX = 13; // targets beyond the visible map are pinned this far inside its edge
@@ -779,6 +779,16 @@
     return near;
   }
 
+  // Any target nearer than its radius plus the "fast" extra of the settings (default 50 km): the channels and
+  // the feed are then read often (8–10 s), not only when it is already in the radius.
+  function anyWithinFast(now) {
+    const extra = Number.isFinite(opts.fastKm) ? opts.fastKm : 50;
+    if (extra <= 0 || !hasBase()) return false;
+    return mapTargets(now).some((t) => {
+      const n = nearOf(t, now);
+      return !!n && n.km <= radiusOf(t) + extra;
+    });
+  }
   const radiusOf = (t) => (MISSILES.has(kindOf(t)) ? opts.alertKmMissile : opts.alertKm);
   // "20 км" or "20 км · ракети 50 км"; short: "20 / 50 км".
   const radiusText = (short) =>
@@ -2191,7 +2201,7 @@
     const now = Date.now();
     nearCache.clear();
     const entered = trackNear(now);
-    setFast(opts.markers && (inside.size > 0 || alertInMine()));
+    setFast(opts.markers && (inside.size > 0 || alertInMine() || anyWithinFast(now)));
     if (quiet) quiet = false;
     else alertEntered(entered, now);
     layer.style.display = opts.markers ? '' : 'none';

@@ -4,7 +4,7 @@
 //   "neptun": { markers, panel, hideFpv, alert, alertKm (drones), alertKmMissile (missiles, KAB, aviation), alertSound,
 //   cardSide, basemap, style, home, homeRing, channels, tgTargets }.
 (function () {
-  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertKmMissile: 50, alertSound: false, cardSide: 'left', basemap: 'none', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [], tgTargets: true };
+  const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertKmMissile: 50, fastKm: 50, alertSound: false, cardSide: 'left', basemap: 'none', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [], tgTargets: true };
   const STYLES = [
     ['bright', 'Яскравий', 'кольори, підсвітка'],
     ['calm', 'Акуратний', 'спокійно, без підсвітки'],
@@ -79,9 +79,15 @@
       <label class="row"><input type="checkbox" id="nep-alert"> Сповіщати, коли до вашої точки (без неї — до ваших районів) ближче ніж</label>
       <div class="inline" style="padding:2px 0 2px 24px">
         <span class="hint">дрони</span>
-        <select id="nep-alertKm">${RADII.map((km) => `<option value="${km}">${km} км</option>`).join('')}</select>
+        <input type="number" id="nep-alertKm" min="1" max="500" step="1" list="nep-km-d" style="width:70px"> км
         <span class="hint">ракети, КАБ, авіація</span>
-        <select id="nep-alertKmMissile">${RADII_M.map((km) => `<option value="${km}">${km} км</option>`).join('')}</select>
+        <input type="number" id="nep-alertKmMissile" min="1" max="500" step="1" list="nep-km-m" style="width:70px"> км
+        <datalist id="nep-km-d">${RADII.map((km) => `<option value="${km}">`).join('')}</datalist>
+        <datalist id="nep-km-m">${RADII_M.map((km) => `<option value="${km}">`).join('')}</datalist>
+      </div>
+      <div class="inline" style="padding:2px 0 2px 24px">
+        <span class="hint">Частіше оновлювати (кожні 8–10 с), коли ціль ближче за радіус плюс</span>
+        <input type="number" id="nep-fastKm" min="0" max="500" step="10" style="width:70px"> км
       </div>
       <div class="inline" style="padding:2px 0 2px 24px">
         <span class="hint">Моя точка</span>
@@ -120,8 +126,9 @@
   const checks = ['markers', 'panel', 'hideFpv', 'booms', 'ticker', 'homeRing', 'alert', 'alertSound', 'tgTargets'];
   const km = q('alertKm');
   const kmM = q('alertKmMissile');
+  const fastKm = q('fastKm');
   const sides = [...section.querySelectorAll('input[name=nep-side]')];
-  km.style.cssText = kmM.style.cssText = 'background:#0d1219;color:inherit;border:1px solid #273142;border-radius:6px;padding:2px 4px;font:inherit';
+  km.style.cssText = kmM.style.cssText = fastKm.style.cssText = 'background:#0d1219;color:inherit;border:1px solid #273142;border-radius:6px;padding:2px 4px;font:inherit';
   let current = { ...DEFAULTS };
   let all = {};
 
@@ -129,15 +136,16 @@
     q('more').style.opacity = current.markers ? '' : '0.45';
     for (const id of ['panel', 'hideFpv', 'booms', 'ticker', 'alert', 'alertSound', 'test', 'home', 'homeClear', 'homeRing', 'channels', 'chAdd', 'tgTargets']) q(id).disabled = !current.markers;
     for (const r of sides) r.disabled = !current.markers;
-    km.disabled = kmM.disabled = q('alertSound').disabled = q('test').disabled = !current.markers || !current.alert;
+    km.disabled = kmM.disabled = fastKm.disabled = q('alertSound').disabled = q('test').disabled = !current.markers || !current.alert;
   }
 
   function fill(s) {
     all = s || {};
     current = { ...DEFAULTS, ...(all.neptun || {}) };
     for (const id of checks) q(id).checked = !!current[id];
-    km.value = String(RADII.includes(current.alertKm) ? current.alertKm : DEFAULTS.alertKm);
-    kmM.value = String(RADII_M.includes(current.alertKmMissile) ? current.alertKmMissile : DEFAULTS.alertKmMissile);
+    if (document.activeElement !== km) km.value = String(num(current.alertKm, DEFAULTS.alertKm, 1));
+    if (document.activeElement !== kmM) kmM.value = String(num(current.alertKmMissile, DEFAULTS.alertKmMissile, 1));
+    if (document.activeElement !== fastKm) fastKm.value = String(num(current.fastKm, DEFAULTS.fastKm, 0));
     for (const r of sides) r.checked = r.value === current.cardSide;
     for (const r of basemaps) r.checked = r.value === current.basemap;
     for (const r of styles) r.checked = r.value === current.style;
@@ -153,8 +161,14 @@
   }
 
   for (const id of checks) q(id).addEventListener('change', (e) => save({ [id]: e.target.checked }));
-  km.addEventListener('change', () => save({ alertKm: Number(km.value) }));
-  kmM.addEventListener('change', () => save({ alertKmMissile: Number(kmM.value) }));
+  // typed by hand: any whole number of km, kept within 1–500 (the "fast" extra: 0–500)
+  function num(v, def, min) {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) ? Math.min(500, Math.max(min, n)) : def;
+  }
+  km.addEventListener('change', () => { km.value = String(num(km.value, current.alertKm, 1)); save({ alertKm: Number(km.value) }); });
+  kmM.addEventListener('change', () => { kmM.value = String(num(kmM.value, current.alertKmMissile, 1)); save({ alertKmMissile: Number(kmM.value) }); });
+  fastKm.addEventListener('change', () => { fastKm.value = String(num(fastKm.value, current.fastKm, 0)); save({ fastKm: Number(fastKm.value) }); });
   const homeIn = q('home');
   function parseHome(v) {
     const m = String(v).match(/(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)/);
