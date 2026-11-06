@@ -14,7 +14,6 @@
   const DEFAULT_PROJ = { lat1: 45, lat2: 51, lat0: 48.5, lon0: 31.5, x0: -690178, y1: 432316, k: 0.000755630581276381 };
   const DEFAULTS = { markers: true, panel: true, hideFpv: false, alert: true, alertKm: 20, alertKmMissile: 50, fastKm: 50, alertSound: false, cardSide: 'left', booms: true, ticker: true, style: 'bright', home: null, homeRing: true, channels: [], tgTargets: true };
   const BADGE_PX = 9; // marker radius on screen
-  const CLUSTER_PX = 15; // markers closer than this on screen become one "×N" marker
   const EDGE_PAD_PX = 13; // targets beyond the visible map are pinned this far inside its edge
   const MOVE_EVERY = 2000; // ms between dead-reckoning steps
   const COURSE_KM = 60; // course line of the selected target
@@ -877,11 +876,12 @@
     el.append(aim, svgEl('circle', { class: 'pulse', r: 11 }), ptr, svgEl('circle', { class: 'halo', r: 11 }));
     const glyph = svgEl('g', { class: 'glyph' });
     const cnt = svgEl('text', { class: 'cnt', x: 9, y: 16 });
+    const num = svgEl('text', { class: 'num', x: -10, y: -9, 'text-anchor': 'end' });
     // "Зник" / "Пропав": a dashed cross over it; "Збили": a solid one
     const cross = svgEl('path', { class: 'xmark', d: 'M-4.2-4.2 4.2 4.2M4.2-4.2-4.2 4.2', transform: 'translate(12.5 -12.5)' });
-    el.append(glyph, cross, cnt);
+    el.append(glyph, cross, cnt, num);
     markerLayer.appendChild(el);
-    return { el, glyph, ptr, cnt, kind: null };
+    return { el, glyph, ptr, cnt, num, kind: null };
   }
 
   // Visible part of the map in map units, shrunk by the edge padding.
@@ -898,6 +898,22 @@
 
   const inView = (v, x, y) => x >= v.x0 && x <= v.x1 && y >= v.y0 && y <= v.y1;
 
+  // Every target on the map has its own number (the lowest free one), kept while it lives: the marker, the tip
+  // and the "looks like №N" hint all use it, so two marks of one target are easy to spot.
+  const numbers = new Map();
+  function numberTargets(list) {
+    const ids = new Set(list.map((t) => t.id));
+    for (const id of [...numbers.keys()]) if (!ids.has(id)) numbers.delete(id);
+    const taken = new Set(numbers.values());
+    for (const t of list) {
+      if (numbers.has(t.id)) continue;
+      let n = 1;
+      while (taken.has(n)) n++;
+      numbers.set(t.id, n);
+      taken.add(n);
+    }
+  }
+
   // Drawing units: single targets and groups of targets that overlap on screen.
   // Targets beyond the visible map are pinned to its edge with the pointer towards them.
   function computeUnits(now) {
@@ -905,7 +921,9 @@
     if (!project || !m || !m.a || !svg.getAttribute('viewBox')) return [];
     unitsPerPx = 1 / m.a;
     const v = viewBounds(m);
-    const items = mapTargets(now)
+    const shown = mapTargets(now);
+    numberTargets(shown);
+    const items = shown
       .sort(bySeverity)
       .map((t) => {
         const p = placeOf(t, now);
@@ -914,7 +932,7 @@
         const edge = Math.abs(x - p.x) + Math.abs(y - p.y) > 1e-6;
         return { t, p, x, y, edge, edgeAngle: edge ? (Math.atan2(p.x - x, y - p.y) * 180) / Math.PI : null, faint: faint(t, now) };
       });
-    const limit = CLUSTER_PX * unitsPerPx;
+    const limit = 0; // no "×N" piles: every target is its own marker, with its own number
     const groups = [];
     let sel = null;
     for (const it of items) {
@@ -1012,6 +1030,7 @@
       m.glyph.setAttribute('transform', `rotate(${turn}) scale(0.72)`);
       m.ptr.setAttribute('transform', `rotate(${u.ptrAngle == null ? 0 : u.ptrAngle.toFixed(1)})`);
       m.cnt.textContent = u.count > 1 ? `×${u.count}` : '';
+      m.num.textContent = u.ids.length === 1 && numbers.has(u.ids[0]) ? numbers.get(u.ids[0]) : '';
       const cls = m.el.classList;
       cls.toggle('nocourse', u.ptrAngle == null);
       cls.toggle('edge', u.edge);
@@ -2022,8 +2041,15 @@
     const near = nearOf(t, now);
     const p = placeOf(t, now);
     const region = regionLine(t);
+    const me = numbers.get(t.id);
+    const twin = mapTargets(now).find((o) => {
+      if (o.id === t.id || kindOf(o) !== kindOf(t)) return false;
+      const q = placeOf(o, now);
+      return Math.hypot(q.x - p.x, q.y - p.y) * kmPerUnit < 15;
+    });
     return (
-      `<div class="tt-h" style="--c:${metaOf(t).color}">${typeChip(kindOf(t))}<b>${nameOf(t)}</b>${maybeJet(t)}</div>` +
+      `<div class="tt-h" style="--c:${metaOf(t).color}">${typeChip(kindOf(t))}<b>${me ? `№${me} ` : ''}${nameOf(t)}</b>${maybeJet(t)}</div>` +
+      (twin && numbers.get(twin.id) ? `<div class="tt-s">поруч схожа ціль №${numbers.get(twin.id)}</div>` : '') +
       `<div class="tt-p">${placeHtml(t)}${region ? `<span>${region}</span>` : ''}</div>` +
       `<div class="tt-b">${statusBadge(statusKey(near))}${distBadge(near)}${courseBadge(p)}${etaBadge(etaMin(t, near))}</div>` +
       (near && near.km >= 0.5 ? `<div class="tt-s">до ${esc(shortName(near.name))}</div>` : '') +

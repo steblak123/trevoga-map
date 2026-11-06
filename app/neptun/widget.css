@@ -54,6 +54,14 @@
 /* several targets in one marker */
 .nep-marker.group .halo { stroke-width: 3.4; }
 .nep-marker.group .cnt { font-size: 11px; }
+.nep-marker .num {
+  fill: #ffd54a;
+  font: 700 10px "Segoe UI", system-ui, sans-serif;
+  paint-order: stroke;
+  stroke: #0b0f15;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
 
 /* explosions from the channel posts */
 .nep-boom { cursor: default; }
