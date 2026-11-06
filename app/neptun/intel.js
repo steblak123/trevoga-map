@@ -31,6 +31,8 @@
   // Explosions: a line that says they were heard or hit, not a warning that they may come.
   const BOOM = /вибух|прил[іи]т|прильот|влучанн|детонац/i;
   const NOT_BOOM = /не\s+чут|не\s+було|можлив|без\s+вибух|загроз|якщо|попередж|не\s+підтвердж|бережіть|укритт|фейк/i;
+  const AHEAD_KM = 70; // a "→Х" post reaches this far ahead of a target whose course points at Х
+  const FAR_WORD_KM = 30; // a track's latest word counts for a target only while that point is this near it
   const BOOM_MS = 40 * 60000; // an explosion stays on the map this long, fading
   const OFFICIAL = /повітряні сили|air force|kpszsu/i;
   // Line kinds that may speak of a target of each kind (null: a line that names no kind at all).
@@ -213,7 +215,19 @@
       for (const s of this.routes.sightings) {
         if (s.at < since || !s.pos) continue;
         const lim = (s.pos.est ? NEAR_EST_KM : NEAR_KM) / this.kmPerUnit;
-        if (!pts.some(([x, y]) => Math.hypot(x - s.pos.x, y - s.pos.y) <= lim)) continue;
+        let hit = pts.some(([x, y]) => Math.hypot(x - s.pos.x, y - s.pos.y) <= lim);
+        // "на Канатове": the place is where it heads, and may be far ahead of it — a target whose own course
+        // points at that place (within 35°) and is not farther than AHEAD_KM from it is the one meant
+        if (!hit && s.pos.est && Number.isFinite(t.heading)) {
+          const [x, y] = pts[0];
+          const km = Math.hypot(x - s.pos.x, y - s.pos.y) * this.kmPerUnit;
+          if (km <= AHEAD_KM) {
+            const bearing = (Math.atan2(s.pos.x - x, y - s.pos.y) * 180) / Math.PI;
+            const d = Math.abs((((bearing - t.heading) % 360) + 540) % 360 - 180);
+            hit = d <= 35;
+          }
+        }
+        if (!hit) continue;
         out.push({ at: s.at, mode: s.kind || null, channel: s.channel, text: s.text, route: s });
       }
       return out.sort((a, b) => b.at - a.at);
@@ -266,7 +280,13 @@
       if (!s) return null;
       // The track is matched by an older point of its way, but what it says now is its latest word: NEPTUN
       // lags behind the channel, which has already written "→Димине" while the match was "Червоновершка".
-      const last = this.routes.lastOf(s.route.track) || s.route;
+      let last = this.routes.lastOf(s.route.track) || s.route;
+      // …unless that word is already about a point far ahead of this target (the track is another, faster one
+      // that passed here: "Долинська → Компаніївка → Помічна"): then the word at this very point stands.
+      if (last !== s.route && last.pos && this.project && Number.isFinite(t.lat)) {
+        const [x, y] = this.project(t.lat, t.lon);
+        if (Math.hypot(x - last.pos.x, y - last.pos.y) * this.kmPerUnit > FAR_WORD_KM) last = s.route;
+      }
       const points = this.routes.route(s.route.track).filter((p, i, a) => !i || p.name !== a[i - 1].name);
       const to = last.to || (last.pos && last.pos.est ? last.pos.name : null);
       return { channel: last.channel, at: last.at, heading: last.heading, kind: last.kind, points, to };

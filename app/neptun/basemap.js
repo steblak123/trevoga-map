@@ -264,10 +264,13 @@
         if (k && (!cur || p.rank < cur.rank)) index.set(k, p);
       }
       // A short one-word key ("Мена" ~ "мені") names a town only if it is a big one.
+      // "у Знам'янці" stems to "знамянц", the town is "знамянк": к/г/х become ц/з/с before the ending -і.
+      const MUTATE = { ц: 'к', з: 'г', с: 'х' };
       api.find = (keys) => {
         let best = null;
         for (const k of keys) {
-          const p = index.get(k);
+          const last = k[k.length - 1];
+          const p = index.get(k) || (MUTATE[last] && index.get(k.slice(0, -1) + MUTATE[last]));
           if (!p || (!k.includes(' ') && k.length < 5 && p.rank > 2)) continue;
           if (!best || p.rank < best.rank || (k.includes(' ') && p.rank === best.rank)) best = p;
         }
