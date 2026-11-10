@@ -9,13 +9,14 @@
 (function (root) {
   const Intel = root.NeptunIntel || (typeof require === 'function' ? require('./intel').Intel : null);
   const placeKey = Intel.placeKey;
+  const MORE = root.NeptunPlacesExtra || (typeof require === 'function' ? require('./basemap/places-extra.js') : []);
 
   const TRACK_MS = 15 * 60000; // a target nobody wrote about this long is not continued by a bare post
   const KEEP_MS = 60 * 60000; // tracks and sightings are kept this long
   const KM_PER_MIN = { jet: 11, missile: 16, kab: 6, plain: 4, recon: 3, fpv: 2 }; // how far a target gets, with slack
   const FAR_KM = 230;
   const AREA_KM = 190; // a place under "✈️Сумщина:" is within this of the oblast's middle
-  const RANK_WEIGHT = { 0: 3, 1: 3, 2: 3, 3: 3, 4: 2.5, 5: 1.6 }; // villages (6) 1
+  const RANK_WEIGHT = { 0: 3, 1: 3, 2: 3, 3: 3, 4: 2.5, 5: 1.6, 7: 0.45 }; // villages (6) 1, hamlets (7) 0.45
   const CONTEXT_MS = 90 * 60000; // "Ще 1 до нас зайшов" is of the kind the channel wrote about lately // a village this far from where the channel writes about is another one of that name
 
   // What a line is about (a line naming none continues the kind of the post, the target, or the channel).
@@ -55,7 +56,9 @@
     [/кривим\s+рогом|кривого\s+рогу|кривому\s+розі|кривий\s+ріг/gi, 'Кривий-Ріг'],
     [/жовті\s+води|жовтих\s+вод|жовтим\s+водам/gi, (m) => m.replace(/\s+/, ' ')],
     [/дніпро\.?\s*обл\S*|днпр\.?(?:\s*обл\S*)?/gi, 'Дніпропетровщина'],
-    [/(^|[\s(/,])ЖВ(?=[\s/,.)!]|$)/g, '$1Жовті Води'],
+    [/(^|[\s(/,→])ЖВ(?=[\s/,.)!]|$)/g, '$1Жовті Води'],
+    [/(^|[\s(/,→])НБ(?=[\s/,.)!]|$)/g, '$1Новий Буг'],
+    [/нов(ий|ого|ому|им)\s+буг(а|у|ом)?(?![а-яіїєґ])/gi, 'Новий Буг'],
   ];
   const NOISE_POST = /https?:\/\/|реквізит|підтрим|донат|кавою|хвилина мовчання|t\.me\//i;
   const GREETING = /📅|доброго ранку|добрий ранок|хвилина мовчання|надобраніч|тихої ночі|тихого (?:дня|вечора)/i;
@@ -148,9 +151,11 @@
       if (!map.has(k)) map.set(k, []);
       map.get(k).push(p);
     };
-    for (const [x, y, name, rank] of [...(data.places || []), ...EXTRA]) {
+    for (const [x, y, name, rank] of [...(data.places || []), ...EXTRA, ...MORE]) {
       const p = { x, y, name, rank };
       const k = placeKey(name);
+      // the same place from two lists (EXTRA and places-extra.js)
+      if ((exact.get(k) || []).some((q) => Math.hypot(q.x - x, q.y - y) < 4)) continue;
       add(exact, k, p);
       const ws = k.split(' ');
       if (ws.length > 1) for (const w of ws) if (w.length >= 5) add(part, w, p);
@@ -185,7 +190,7 @@
     const b = before.toLowerCase().replace(/[.,:;!]+\s*$/, ' ').trimEnd();
     if (/(?:^|[\s(])(?:від|з|із|зі|звідти)$/.test(b)) return 'from';
     if (/(?:→|->|➡️?|➡)$/.test(b)) return 'to';
-    if (/(?:^|\s)(?:в|у)\s+(?:бік|сторону|напрямку|напрямі)$|(?:^|\s)курс(?:ом)?(?:\s+на)?$|(?:^|\s)(?:на|до|по курсу|на виліт в|через)$/.test(b)) {
+    if (/(?:^|[\s→>➡])(?:в|у)\s+(?:бік|сторону|напрямку|напрямі)$|(?:^|\s)курс(?:ом)?(?:\s+на)?$|(?:^|\s)(?:на|до|по курсу|на виліт в|через)$/.test(b)) {
       return /через$/.test(b) ? 'at' : 'to';
     }
     return 'at';
@@ -211,6 +216,11 @@
         let cands = alias ? gaz.byName(alias[1]) : gaz.exact.get(key);
         // Genitive plural drops the ending and puts in a vowel: "П'ятихаток" ~ "П'ятихатки" (пятихатк).
         if ((!cands || !cands.length) && !alias) cands = gaz.exact.get(key.replace(/[ои]([бвгджзклмнпрстфхцчшщ])$/, '$1'));
+        // …or drops a vowel of the name itself: "Бобринця" ~ "Бобринець", "Єланця" ~ "Єланець", "Городка" ~ "Городок".
+        if ((!cands || !cands.length) && !alias && n === 1) {
+          const m = /^(.+[бвгджзклмнпрстфхцчшщ])([цкн])$/.exec(key);
+          if (m) cands = gaz.exact.get(`${m[1]}и${m[2]}`) || gaz.exact.get(`${m[1]}о${m[2]}`);
+        }
         let weak = false;
         if ((!cands || !cands.length) && n === 1) {
           cands = gaz.part.get(key);
@@ -241,16 +251,17 @@
       if (last && gap != null && /^\s*(?:\d?[а-яіїєґ]{1,3}\s*)?[/|\\]\s*$|^\s*-\s*$/i.test(gap) && !!last.region === !!h.region) {
         last.names.push(h.name);
         last.cands.push(h.cands);
+        last.end = h.end;
       } else {
         let role = roleOf(line.slice(prevEnd >= 0 ? prevEnd : 0, h.start));
         // "на Дніпропетровщині", "в Черкаській": in the region, not flying to it.
         if (h.region && role === 'to' && /(?:щині|ській|цькій|жжі|ькій)$/i.test(line.slice(h.start, h.end))) role = 'at';
-        groups.push({ role, names: [h.name], cands: [h.cands], region: h.region || null, center: h.center || null, start: h.start });
+        groups.push({ role, names: [h.name], cands: [h.cands], region: h.region || null, center: h.center || null, start: h.start, end: h.end });
       }
       prevEnd = h.end;
     }
-    // "Реактивний від Дніпропетровщини до нас - Попельнасте": the bare name after "до нас -" is where it is.
-    return groups;
+    // "На Кроп поки немає, цей пішов ближче до Компаніївки": nothing flies to the place said to be clear.
+    return groups.filter((g) => !/^\s*(?:поки\s+|наразі\s+|зараз\s+)?(?:немає|нема|чисто|без\s+загроз)(?![а-яіїєґ])/i.test(line.slice(g.end)));
   }
 
   // How far a target may have got since it was last named (km): the way it flies, with slack, at most 90 km.
@@ -340,6 +351,15 @@
       if (st.home && st.spreadKm > LOCAL_SPREAD_KM) return st.home;
       if (!st.home || dist(st.home, mine) * this.kmPerUnit <= BASE_KM) return mine;
       return st.home;
+    }
+
+    // A channel that writes about all Ukraine (its places lie far from their middle), or about an area far
+    // from you. Not known before it has named three places: then it is taken for a local one.
+    isWide(channel) {
+      const st = this.channels.get(channel);
+      if (!st || !st.home) return false;
+      if (st.spreadKm > LOCAL_SPREAD_KM) return true;
+      return !!this.defaultHome && dist(st.home, this.defaultHome) * this.kmPerUnit > BASE_KM;
     }
 
     learnHome(st, p) {
@@ -589,7 +609,7 @@
         used.add(track.id);
         if (lk && (!track.kind || track.kind === 'plain' || lk === 'jet')) track.kind = lk;
         else if (!track.kind) track.kind = kindHint || (at - st.kindAt < CONTEXT_MS ? st.kind : null);
-        if (count > 1 && (isNew || listed)) track.count = count; // "2х БпЛА → Х": that many there now
+        if (cnt && !ord && (isNew || listed)) track.count = count; // "2х БпЛА → Х": that many there now; "1х БпЛА Х": one
 
         const prev = track.last;
         const fromPt = fromG && !fromG.region ? this.point(fromG, prev || pos, this.baseOf(st)) : null;
@@ -610,6 +630,11 @@
         if (!a) a = fromPt;
         if (pos && a && dist(a, pos) * this.kmPerUnit >= 3) heading = bearing(a, pos);
         if (pos && toPt && dist(pos, toPt) * this.kmPerUnit >= 3) heading = bearing(pos, toPt);
+        // "Реактивний від Криворіжжя на Гурівку", the first word of it: from the middle of that region, roughly.
+        if (heading == null && pos && fromG && fromG.region && fromG.center) {
+          const km = dist(fromG.center, pos) * this.kmPerUnit;
+          if (km >= 15 && km <= 300) heading = bearing(fromG.center, pos);
+        }
         const prevName = track.points.length ? [...track.points].reverse().find((q) => !pos || q.name !== pos.name) : null;
         const s = {
           channel: post.channel,

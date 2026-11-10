@@ -441,3 +441,40 @@ test('a week of your two channels: few targets twice at once (the many of a mass
     assert.ok(twins <= limits[ch], `@${ch}: ${twins} pairs of targets within 20 km of each other (was 90 / 119 before)`);
   }
 });
+
+// ---------- 09.11: a jet only your channel wrote of ----------
+
+test('"Реактивний від Криворіжжя на Гурівку" → "→Долинська/Тимкове" → "→Сугокліївка" → "→Тарасівка і далі на захід" is one jet flying west', () => {
+  const at = (m) => new Date(Date.parse('2026-11-09T08:14:00Z') + m * 60000).toISOString();
+  const posts = [
+    { id: 1, date: at(0), text: 'Реактивний від Криворіжжя на Гурівку', reply: null },
+    { id: 2, date: at(0.5), text: '→Долинська/Тимкове', reply: null },
+    { id: 3, date: at(3), text: '→Сугокліївка', reply: null },
+    { id: 4, date: at(5), text: '→Тарасівка і далі на захід', reply: null },
+  ].map((p) => ({ ...p, channel: '@krop_vanek' }));
+  const { r, read } = run(posts);
+  assert.equal(new Set(read.map((x) => one(read, x.post.id).track)).size, 1, 'one target');
+  const first = one(read, 1);
+  assert.ok(first.heading > 270 && first.heading < 350, `from Криворіжжя to Гурівка is north-west, got ${first.heading}`);
+  assert.equal(one(read, 3).pos.name, 'Сугокліївка', 'a village of places-extra.js');
+  // each next village lies west of the one before: the Тарасівка beyond Сугокліївка, not the one by Kropyvnytskyi
+  const xs = read.map((x) => x.out[0].pos.x);
+  assert.ok(xs[1] < xs[0] && xs[2] < xs[1] && xs[3] < xs[2], xs.join(' > '));
+  assert.equal(r.isWide('@krop_vanek'), false);
+});
+
+test('a local channel is not a wide one, an all-Ukraine summary is', () => {
+  assert.equal(run(week('krop_vanek')).r.isWide('@krop_vanek'), false);
+  assert.equal(run(week('shpk_krop')).r.isWide('@shpk_krop'), false);
+  assert.equal(run(week('povitryanatrivogaaa')).r.isWide('@povitryanatrivogaaa'), true);
+});
+
+test('"в бік Бобринця", "На Кроп поки немає, цей пішов ближче до Компаніївки", "1х" after "2х"', () => {
+  const mk = (id, min, text) => ({ id, date: new Date(Date.parse('2026-11-09T10:00:00Z') + min * 60000).toISOString(), text, reply: null, channel: '@shpk_krop' });
+  const { read } = run([mk(1, 0, 'Реактивний Долинська'), { ...mk(2, 2, 'В бік Бобринця'), reply: { id: 1, text: 'Реактивний Долинська' } }, mk(3, 20, 'БпЛА Нове'), mk(4, 22, 'На Кроп поки немає, цей пішов ближче до Компаніївки'), mk(5, 60, '2х БпЛА Тишківка'), mk(6, 63, '1х БпЛА Тишківка ⏎ 1х БпЛА Панчеве'.replace(' ⏎ ', '\n'))]);
+  assert.equal(one(read, 2).pos.name, 'Бобринець');
+  assert.equal(one(read, 2).track, one(read, 1).track);
+  assert.equal(byId(read, 4).length, 0, 'nothing flies to the place said to be clear');
+  assert.equal(one(read, 5).count, 2);
+  assert.ok(byId(read, 6).every((s) => s.count === 1), 'one each now');
+});

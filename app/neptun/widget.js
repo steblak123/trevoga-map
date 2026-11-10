@@ -450,7 +450,10 @@
   // point of a route of one of your channels) is drawn with a dashed ring, counts for the radius and the banner,
   // until NEPTUN has one of its kind within 25 km of it, or the channel has not written of it for a few minutes.
   const TG_TYPE = { jet: 'uav', plain: 'uav', missile: 'missile', kab: 'kab', recon: 'recon', fpv: 'fpv' };
-  const TG_FRESH_MIN = { jet: 7, missile: 3, kab: 3 }; // others 8
+  const TG_FRESH_MIN = { jet: 7, missile: 4, kab: 3 }; // others 8
+  // …and then stays this long more, faint ("Застарілі дані"), where it was last named: the channels write of a
+  // Shahed every 5 minutes or so, at times every 12, and a mark that goes and comes back is worse than a faint one.
+  const TG_COAST_MIN = { jet: 4, missile: 3, kab: 2 }; // others 6
   const TG_SAME_KM = 25;
   const TG_AREA_KM = 150; // a target only your channel has is shown this close to your point / regions
   const TG_MERGE_KM = 20; // two of your channels about one target: this close…
@@ -469,12 +472,17 @@
     // в область, Ганнівка" are one jet with two sources.
     const cands = [];
     const nameKey = window.NeptunIntel && window.NeptunIntel.placeKey;
-    for (const s of intel.routes.live(now, 8 * 60000)) {
+    for (const s of intel.routes.live(now)) {
       const ch = String(s.channel).toLowerCase();
       if (!intel.trusted.has(ch)) continue;
-      // A channel NEPTUN reads itself (an all-Ukraine summary like @povitryanatrivogaaa): NEPTUN has its targets.
-      if (intel.feedChannels && intel.feedChannels.has(ch)) continue;
-      if (now - s.at > (TG_FRESH_MIN[s.kind] || 8) * 60000) continue;
+      // An all-Ukraine summary NEPTUN reads itself (@povitryanatrivogaaa): NEPTUN has its targets. A local
+      // channel stays even when NEPTUN reads it too (@krop_vanek): NEPTUN makes no track of many of its posts
+      // ("→Долинська/Тимкове"), and the ones it does make are found below (known).
+      if (intel.feedChannels && intel.feedChannels.has(ch) && intel.routes.isWide(s.channel)) continue;
+      const fresh = (TG_FRESH_MIN[s.kind] || 8) * 60000;
+      const age = now - s.at;
+      if (age > fresh + (TG_COAST_MIN[s.kind] || 6) * 60000) continue;
+      const coast = age > fresh && !s.lost && !s.down;
       // Only around you: farther off, NEPTUN's own tracks are the ones to go by.
       if (hasBase()) {
         const n = nearestAt(s.pos.x, s.pos.y);
@@ -504,7 +512,7 @@
         return km <= 60 && !!nameKey && !!t.locality && s.pos.name.split('/').some((n) => nameKey(n) === nameKey(t.locality));
       });
       if (known) continue;
-      cands.push({ s, lat, lon, type, missile, path, first: tr && tr.points.length ? tr.points[0].at : s.at });
+      cands.push({ s, lat, lon, type, missile, path, coast, first: tr && tr.points.length ? tr.points[0].at : s.at });
     }
     const meet = (a, b) => {
       const lim = (a.s.pos.est || b.s.pos.est ? TG_MERGE_KM + 8 : TG_MERGE_KM) / kmPerUnit;
@@ -551,7 +559,7 @@
         toward: toward && toward.s.pos.name.split('/')[0] !== s.pos.name.split('/')[0] ? toward.s.pos.name.split('/')[0] : '',
         updatedAt: iso,
         confirmedAt: iso,
-        status: 'active',
+        status: g.every((c) => c.coast) ? 'stale' : 'active',
         sourceCount: channels.length,
         count: Math.max(...g.map((c) => c.s.count || 1)) > 1 ? Math.max(...g.map((c) => c.s.count || 1)) : undefined,
         positionQuality: s.pos.est ? 'approx' : 'confirmed',
