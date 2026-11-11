@@ -23,7 +23,7 @@
   const KINDS = [
     ['fpv', /fpv|фпв/i],
     ['recon', /розвід|орлан|zala|(?:^|[^а-яіїєґ])зала(?![а-яіїєґ])|supercam|суперкам/i],
-    ['missile', /ракет|крилат|балістик|калібр|іскандер|кинджал|х-?101|х-?59|х-?22/i],
+    ['missile', /ракет|крилат|балістик|калібр|іскандер|кинджал|х-?101|х-?59|х-?22|бандерол|бамбарол|(?:^|[^а-яіїєґ])кр(?![а-яіїєґ])/i], // "бандероль": a cruise missile
     ['kab', /(?:^|[^а-яіїєґ])каб(?:и|ів|ами|ам|ах|у)?(?![а-яіїєґ])|авіабомб|керован/i], // \b knows no Cyrillic
     ['plain', /шахед|мопед|бпла|герань|гербер|дрон|балалайк|🛵|🏍/i],
   ];
@@ -324,7 +324,12 @@
     // "реактивний", and NEPTUN's own map then still shows an ordinary one — that is mode 'maybe'.
     about(t) {
       if (!t || t.type !== 'uav') return null;
-      const list = this.mentions(t).filter((x) => x.mode === 'jet' || x.mode === 'plain');
+      const all = this.mentions(t);
+      const list = all.filter((x) => x.mode === 'jet' || x.mode === 'plain');
+      // "Бандероль курсом на Градизьк", "Крилата ракета на Світловодськ": NEPTUN made a Shahed track of a post
+      // that names no kind; it is a missile when the posts that say so are no fewer than those about Shaheds.
+      const missiles = all.filter((x) => x.mode === 'missile');
+      if (missiles.length && missiles.length >= list.length) return { mode: 'missile', at: missiles[0].at, channel: missiles[0].channel };
       const jets = list.filter((x) => x.mode === 'jet');
       const channels = new Set(jets.map((x) => x.channel));
       const official = jets.find((x) => OFFICIAL.test(x.channel) || this.trusted.has(String(x.channel).toLowerCase()));

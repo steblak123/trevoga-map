@@ -86,6 +86,7 @@
     if (t.subtype) return { kind: t.subtype === 'jet' ? 'jet' : 'uav', by: 'subtype' };
     if (saysJet(t.title) || saysJet(t.explanationShort)) return { kind: 'jet', by: 'text' };
     const h = hint ? hint(t) : null;
+    if (h === 'missile') return { kind: 'missile', by: 'post' }; // "бандероль" in the posts about its place
     const v = t.velocity && t.velocity.speedKmh;
     const fast = Number.isFinite(v) && v >= JET_KMH;
     if (h === 'jet') return { kind: 'jet', by: 'post' };

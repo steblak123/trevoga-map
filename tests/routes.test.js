@@ -513,3 +513,51 @@ test('an edited post is read again: the target moves, keeps its id, later posts 
   assert.equal(intel.posts.size, 1, 'the old text is gone');
   assert.match([...intel.posts.values()][0].lines[0].text, /Олександрія/);
 });
+
+// ---------- fuse.js: one target, several tracks ----------
+
+test('a jet NEPTUN put at four places one after another is one target; two jets on one route stay two', () => {
+  const { fuse } = require('../app/neptun/fuse.js');
+  const km = (a, b) => Geo.distanceKm(a.lat, a.lon, b.lat, b.lon);
+  const at = (hm) => Date.parse(`2026-11-10T${hm}:00Z`);
+  const mk = (id, lat, lon, hm, kind, extra) => ({ id, lat, lon, at: at(hm), born: at(hm), kind, proven: true, ...extra });
+  // Долина / Хоростків 10:39 -> Хоростків 10:40 -> Копичинці 10:42 -> Чортків 10:43 (Тернопільщина)
+  const chain = [mk('dolyna', 49.2, 25.85, '10:39', 'uav', { fast: true }), mk('khor', 49.21, 25.92, '10:40', 'jet'), mk('kop', 49.1, 25.93, '10:42', 'jet'), mk('chort', 49.02, 25.8, '10:43', 'jet')];
+  const r = fuse(chain, km);
+  assert.deepEqual([...r.hidden].sort(), ['dolyna', 'khor', 'kop']);
+  assert.deepEqual(r.of.get('chort').map((o) => o.id), ['kop', 'khor', 'dolyna']);
+  // the second jet follows the first: its track was there before the first one's last update
+  const two = [mk('first', 49.02, 25.8, '10:43', 'jet', { born: at('10:30') }), mk('second', 49.21, 25.92, '10:40', 'jet', { born: at('10:36') })];
+  assert.equal(fuse(two, km).hidden.size, 0);
+  // plain Shaheds 40 km apart, groups, other kinds: untouched
+  assert.equal(fuse([mk('a', 49, 25, '10:40', 'uav'), mk('b', 49.36, 25, '10:42', 'uav')], km).hidden.size, 0);
+  assert.equal(fuse([mk('a', 49, 25, '10:40', 'jet', { count: 2 }), mk('b', 49.05, 25, '10:42', 'jet')], km).hidden.size, 0);
+  assert.equal(fuse([mk('a', 49, 25, '10:40', 'kab'), mk('b', 49.05, 25, '10:42', 'kab')], km).hidden.size, 0);
+});
+
+test('"бандероль" is a missile: the Shahed tracks by Світловодськ are the cruise missile there', () => {
+  const { fuse } = require('../app/neptun/fuse.js');
+  const km = (a, b) => Geo.distanceKm(a.lat, a.lon, b.lat, b.lon);
+  const at = (hm) => Date.parse(`2026-11-10T${hm}:00Z`);
+  const tracks = [
+    { id: 'hradyzk', lat: 49.23, lon: 33.13, at: at('12:42'), born: at('12:41'), kind: 'missile', proven: true }, // "Бандероль курсом на Градизьк"
+    { id: 'missile', lat: 49.05, lon: 33.24, at: at('12:43'), born: at('12:42'), kind: 'missile', proven: true },
+    { id: 'shahed', lat: 49.07, lon: 33.2, at: at('12:44'), born: at('12:43'), kind: 'uav', proven: false }, // "Над водою, летить в бік Світловодська"
+  ];
+  const r = fuse(tracks, km);
+  assert.deepEqual([...r.hidden].sort(), ['hradyzk', 'shahed']);
+  assert.equal(fuse([{ ...tracks[2], proven: true }, tracks[1]], km).hidden.size, 0, 'a Shahed the posts call a Shahed stays');
+
+  const intel = new Intel();
+  const now = at('12:44');
+  intel.add([
+    { channel: '@PoltavaRadar', date: new Date(at('12:43')).toISOString(), text: '❗️ Бандероль над водосховищем курсом на Градизьк/Світловодськ.' },
+    { channel: '@kudy_letyt', date: new Date(at('12:41')).toISOString(), text: 'Бандероль курсом на Градизьк по межі з Черкащиною' },
+    { channel: '@x', date: new Date(at('12:40')).toISOString(), text: '🚀 Полтавщина (Бандеролі):\n→Оржиця/Черкащина.' },
+    { channel: '@y', date: new Date(at('12:40')).toISOString(), text: 'БпЛА на Лубни' },
+  ], now);
+  const t = (locality) => ({ id: 't', type: 'uav', locality, region: 'Полтавська область', updatedAt: new Date(at('12:43')).toISOString() });
+  assert.equal(intel.about(t('Градизьк')).mode, 'missile');
+  assert.equal(intel.about(t('Оржиця')).mode, 'missile', 'under the header "(Бандеролі):"');
+  assert.equal(intel.about(t('Лубни')).mode, 'plain');
+});

@@ -250,6 +250,7 @@
     const title = (t.title || '').trim();
     const many = t.count > 1 || /груп|шахеди/i.test(title);
     if (kind === 'jet') return many ? 'Реактивні шахеди' : 'Реактивний шахед';
+    if (kind === 'missile' && t.type === 'uav') return many ? 'Ракети' : 'Ракета'; // a "Шахед" track the posts call a missile
     if (kind === 'uav') return !title || /^(бпла|шахеди?|uav|група бпла.*)$/i.test(title) ? (many ? 'Шахеди' : 'Шахед') : title;
     return title || metaOf(t).short;
   }
@@ -371,7 +372,7 @@
     const f = fateFor(t);
     return !f || f.fate !== 'down' || Date.now() - f.at <= DOWN_SHOW_MS;
   };
-  const targets = () => [...client.list().filter((t) => shownYet(t) && !alternatives().hidden.has(t.id)), ...channelTargets()].filter(visible);
+  const targets = () => [...client.list().filter((t) => shownYet(t) && !alternatives().hidden.has(t.id) && !fused().hidden.has(t.id)), ...channelTargets()].filter(visible);
 
   // ---------- one target, several places ----------
   // A post that names places as alternatives ("курсом на Черкащину (Кам'янка/Сміла)") makes NEPTUN put a track at
@@ -438,6 +439,37 @@
     }
     return res;
   }
+  // ---------- one target, several tracks (fuse.js) ----------
+  const firstSeen = new Map(); // track id -> when this widget first got it
+  let fuseCache = { k: '', hidden: new Set(), of: new Map() };
+  function fused() {
+    const k = `${intel ? intel.version : 0}|${clientRev}`;
+    if (fuseCache.k === k) return fuseCache;
+    const res = { k, hidden: new Set(), of: new Map() };
+    fuseCache = res; // before the work: kindOf() may ask for targets()
+    if (!window.NeptunFuse) return res;
+    const alt = alternatives().hidden;
+    const list = client
+      .list()
+      .filter((t) => !t.areaOnly && Number.isFinite(t.lat) && !alt.has(t.id) && shownYet(t) && !fateFor(t))
+      .map((t) => {
+        const at = Date.parse(t.updatedAt || t.confirmedAt) || 0;
+        const c = classify(t);
+        const first = Array.isArray(t.trail) && t.trail.length ? Date.parse(t.trail[0].t) || at : at;
+        return { id: t.id, t, lat: t.lat, lon: t.lon, at, born: Math.min(at, first, firstSeen.get(t.id) || at), kind: c.kind, proven: t.type !== 'uav' || c.by != null, fast: c.by === 'maybe', count: t.count };
+      });
+    const r = window.NeptunFuse(list, (a, b) => Geo.distanceKm(a.lat, a.lon, b.lat, b.lon));
+    res.hidden = r.hidden;
+    for (const [id, olds] of r.of) res.of.set(id, olds.map((o) => o.t));
+    return res;
+  }
+  // The places a target was reported at before, oldest first ("Долина → Хоростків → Копичинці"), or null.
+  const wayOf = (t) => {
+    const olds = t && !t.tg ? fused().of.get(t.id) : null;
+    if (!olds || !olds.length) return null;
+    const names = [...olds].reverse().map((o) => o.locality || o.district || o.region).filter(Boolean);
+    return names.filter((n, i) => n !== names[i - 1] && n !== t.locality);
+  };
   const altsOf = (t) => (t && !t.tg ? alternatives().of.get(t.id) || null : null);
   const altName = (t) => {
     const alts = altsOf(t);
@@ -2050,6 +2082,7 @@
     const p = placeOf(t, now);
     const region = regionLine(t);
     const me = numbers.get(t.id);
+    const way = wayOf(t);
     const twin = mapTargets(now).find((o) => {
       if (o.id === t.id || kindOf(o) !== kindOf(t)) return false;
       const q = placeOf(o, now);
@@ -2059,6 +2092,7 @@
       `<div class="tt-h" style="--c:${metaOf(t).color}">${typeChip(kindOf(t))}<b>${me ? `№${me} ` : ''}${nameOf(t)}</b>${maybeJet(t)}</div>` +
       (twin && numbers.get(twin.id) ? `<div class="tt-s">поруч схожа ціль №${numbers.get(twin.id)}</div>` : '') +
       `<div class="tt-p">${placeHtml(t)}${region ? `<span>${region}</span>` : ''}</div>` +
+      (way && way.length ? `<div class="tt-s">${esc(way.join(' → '))} →</div>` : '') +
       `<div class="tt-b">${statusBadge(statusKey(near))}${distBadge(near)}${courseBadge(p)}${etaBadge(etaMin(t, near))}</div>` +
       (near && near.km >= 0.5 ? `<div class="tt-s">до ${esc(shortName(near.name))}</div>` : '') +
       (edge ? '<div class="tt-s">за межами карти</div>' : '') +
@@ -2297,6 +2331,9 @@
   client.subscribe((kind) => {
     if (kind === 'data') {
       clientRev++;
+      const seenAt = Date.now();
+      for (const t of client.list()) if (!firstSeen.has(t.id)) firstSeen.set(t.id, seenAt);
+      if (firstSeen.size > 3000) for (const id of firstSeen.keys()) if (!client.threats.has(id)) firstSeen.delete(id);
       recordMoves(Date.now());
       newTargets();
       renderAll();
