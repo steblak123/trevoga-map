@@ -69,6 +69,7 @@
       this.timer = null;
       this.listeners = new Set();
       this.trusted = new Set(); // your own channels ('@name', lower case): one of them is enough for a jet
+      this.byId = new Map(); // channel|post number -> its key in posts (your channels: an edited post replaces itself)
       this.seen = new Map(); // channel|text -> times: the same post from the feed and from Telegram
       this.feedChannels = new Set(); // '@name' (lower case) of the channels in NEPTUN's own feed
       this.routes = null; // routes.js over the basemap gazetteer (setPlaces)
@@ -124,6 +125,13 @@
         if (!m || typeof m.text !== 'string') continue;
         const key = `${m.channel}|${m.date}|${m.text}`;
         if (this.posts.has(key)) continue;
+        // a post of your channel edited in Telegram (the same number, another text): the old text goes
+        if (m.id != null) {
+          const idKey = `${m.channel}|${m.id}`;
+          const old = this.byId.get(idKey);
+          if (old && old !== key) this.posts.delete(old);
+          this.byId.set(idKey, key);
+        }
         const at = Date.parse(m.date) || now;
         const same = `${String(m.channel || '').trim().toLowerCase()}|${norm(m.text).replace(/[^a-zа-я0-9]+/g, '')}`;
         const times = this.seen.get(same) || [];
@@ -151,6 +159,7 @@
         added = true;
       }
       for (const [key, p] of this.posts) if (now - p.at > KEEP_MS) this.posts.delete(key);
+      if (this.byId.size > 4000) for (const [k, key] of this.byId) if (!this.posts.has(key)) this.byId.delete(k);
       if (this.seen.size > 2000 || added) {
         for (const [k, times] of this.seen) {
           const keep = times.filter((x) => now - x <= KEEP_MS);

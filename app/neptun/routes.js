@@ -295,7 +295,7 @@
     }
 
     state(channel) {
-      if (!this.channels.has(channel)) this.channels.set(channel, { tracks: new Map(), postTracks: new Map(), posts: new Map(), homePts: [], home: null, kind: null, kindAt: 0 });
+      if (!this.channels.has(channel)) this.channels.set(channel, { tracks: new Map(), postTracks: new Map(), posts: new Map(), raw: new Map(), homePts: [], home: null, kind: null, kindAt: 0 });
       return this.channels.get(channel);
     }
 
@@ -382,9 +382,19 @@
     add(posts, now = Date.now()) {
       const fresh = [];
       const list = posts.filter((p) => p && typeof p.text === 'string' && p.id != null).sort((a, b) => Date.parse(a.date) - Date.parse(b.date) || a.id - b.id);
+      const edited = new Map(); // channel -> ids of its posts whose text was changed in Telegram
       for (const post of list) {
         const st = this.state(post.channel);
-        if (st.posts.has(post.id)) continue;
+        if (st.posts.has(post.id)) {
+          const was = st.raw.get(post.id);
+          if (was && was.text !== post.text) {
+            st.raw.set(post.id, post);
+            if (!edited.has(post.channel)) edited.set(post.channel, new Set());
+            edited.get(post.channel).add(post.id);
+          }
+          continue;
+        }
+        st.raw.set(post.id, post);
         const out = this.read(st, post);
         st.posts.set(post.id, out);
         for (const s of out) {
@@ -392,8 +402,29 @@
           fresh.push(s);
         }
       }
+      for (const [channel, ids] of edited) fresh.push(...this.reread(channel).filter((s) => ids.has(s.post)));
       this.prune(now);
       return fresh;
+    }
+
+    // A post was edited ("→Тарасівка" became "→Тарасівка і далі на захід", a wrong village was put right): the
+    // posts of that channel still kept are read again from the first, as if they had come that way. The ids
+    // of the targets stay (they are made of the post numbers); where the channel writes about is not learnt twice.
+    reread(channel) {
+      const st = this.state(channel);
+      const posts = [...st.raw.values()].sort((a, b) => Date.parse(a.date) - Date.parse(b.date) || a.id - b.id);
+      this.sightings = this.sightings.filter((s) => s.channel !== channel);
+      Object.assign(st, { tracks: new Map(), postTracks: new Map(), posts: new Map(), kind: null, kindAt: 0, last: null, again: true });
+      const out = [];
+      for (const post of posts) {
+        const got = this.read(st, post);
+        st.posts.set(post.id, got);
+        out.push(...got);
+      }
+      st.again = false;
+      this.sightings.push(...out);
+      this.sightings.sort((a, b) => a.at - b.at);
+      return out;
     }
 
     prune(now) {
@@ -401,7 +432,11 @@
       this.sightings = this.sightings.filter((s) => s.at >= cut);
       for (const st of this.channels.values()) {
         for (const [id, t] of st.tracks) if (t.updated < cut) st.tracks.delete(id);
-        for (const [id, out] of st.posts) if (out.at < cut) st.posts.delete(id);
+        for (const [id, out] of st.posts) {
+          if (out.at >= cut) continue;
+          st.posts.delete(id);
+          st.raw.delete(id);
+        }
       }
     }
 
@@ -435,6 +470,7 @@
         const ord = ORDINAL.exec(line);
         const ordinal = ord ? (ord[1] ? Number(ord[1]) : { перший: 1, другий: 2, третій: 3 }[ord[2].toLowerCase()]) : 0;
         if (explicitNew(line, groups, ordinal)) return;
+        const cnt = COUNT.exec(line);
         const inRegion = groups.find((g) => g.region && g.role === 'at');
         const where = (inRegion && inRegion.center) || area;
         for (const t of live) {
@@ -443,17 +479,70 @@
           if (!rr.pos) continue;
           if (where && dist(rr.pos, where) * this.kmPerUnit > AREA_KM) continue;
           const km = dist(t.last, rr.pos) * this.kmPerUnit;
-          if (km <= reachOf(t, at)) pairs.push({ li, t, rr, km });
+          if (km <= reachOf(t, at)) pairs.push({ li, t, rr, km, cost: this.cost(t, rr.pos, at, lk || headKind, cnt && !ord ? Number(cnt[1] || cnt[2]) : 0) });
         }
       });
-      pairs.sort((a, b) => a.km - b.km);
-      const taken = new Set();
-      for (const p of pairs) {
-        if (plan.has(p.li) || taken.has(p.t.id)) continue;
-        plan.set(p.li, p);
-        taken.add(p.t.id);
-      }
+      for (const p of this.assign(pairs)) plan.set(p.li, p);
       return plan;
+    }
+
+    // The course a track has kept over at least STEADY_KM of its way (the last 15 min), degrees, or null.
+    headingOf(t, at) {
+      if (!t.last) return null;
+      for (let i = t.points.length - 2; i >= 0; i--) {
+        const q = t.points[i];
+        if (at - q.at > 15 * 60000) break;
+        if (q.est) continue; // "В бік Аджамки": where it was heading, not where it was
+        if (dist(q, t.last) * this.kmPerUnit >= STEADY_KM) return bearing(q, t.last);
+      }
+      return null;
+    }
+
+    // How badly a place fits a track as its next point: the km to it, more when it lies off the track's course
+    // (three times for a place straight behind), plus a little for each minute the channel has not written of
+    // it, for another kind and for another number of targets ("2х БпЛА Х" is first of all the track that has two).
+    cost(t, pos, at, lineKind, count) {
+      const km = dist(t.last, pos) * this.kmPerUnit;
+      let c = km;
+      const h = km >= 5 ? this.headingOf(t, at) : null;
+      if (h != null) c *= 1 + Math.abs((((bearing(t.last, pos) - h) % 360) + 540) % 360 - 180) / 90;
+      else if (km >= 5) c *= 1.25; // a course not known yet is no better than one a little off
+      c += (Math.max(0, at - t.updated) / 60000) * 1.5; // the one the channel wrote of last is the likelier
+      if (lineKind && t.kind && lineKind !== t.kind) c += 15;
+      if (count && (t.count || 1) !== count) c += 10;
+      return c;
+    }
+
+    // Lines to targets, each at most once: as many pairs as can be, and of those the set with the least total
+    // cost — not the nearest pair first, which may take the only target the next line could have been.
+    assign(pairs) {
+      const lines = [...new Set(pairs.map((p) => p.li))];
+      const of = new Map(lines.map((li) => [li, pairs.filter((p) => p.li === li).sort((a, b) => a.cost - b.cost)]));
+      lines.sort((a, b) => of.get(a).length - of.get(b).length);
+      let best = null;
+      let nodes = 0;
+      const taken = new Set();
+      const cur = [];
+      const go = (i, n, cost) => {
+        if (++nodes > 20000) return;
+        if (best && n + (lines.length - i) < best.n) return; // cannot match as many
+        if (i === lines.length) {
+          if (!best || n > best.n || (n === best.n && cost < best.cost)) best = { n, cost, set: cur.slice() };
+          return;
+        }
+        if (best && n + (lines.length - i) === best.n && cost >= best.cost) return;
+        for (const p of of.get(lines[i])) {
+          if (taken.has(p.t.id)) continue;
+          taken.add(p.t.id);
+          cur.push(p);
+          go(i + 1, n + 1, cost + p.cost);
+          cur.pop();
+          taken.delete(p.t.id);
+        }
+        go(i + 1, n, cost);
+      };
+      go(0, 0, 0);
+      return best ? best.set : [];
     }
 
     // The tracks a reply continues: those of the post it answers, or of that post's own reply chain.
@@ -567,8 +656,9 @@
             if (!rr.pos) continue;
             if (where && dist(rr.pos, where) * this.kmPerUnit > AREA_KM) continue; // a namesake outside the region
             const km = dist(t.last, rr.pos) * this.kmPerUnit;
-            if (km <= reachOf(t, at) && km < bd) {
-              bd = km;
+            const c = this.cost(t, rr.pos, at, lk || headKind || quoteKind, cnt && !ord ? count : 0);
+            if (km <= reachOf(t, at) && c < bd) {
+              bd = c;
               best = { t, rr };
             }
           }
@@ -654,9 +744,9 @@
         };
         if (pos) {
           st.last = { x: pos.x, y: pos.y, at };
-          track.last = { x: pos.x, y: pos.y, name: pos.name, at };
+          track.last = { x: pos.x, y: pos.y, name: pos.name, at, est: !!pos.est };
           track.points.push(track.last);
-          if (!pos.est && pos.rank <= 6) this.learnHome(st, pos);
+          if (!pos.est && pos.rank <= 6 && !st.again) this.learnHome(st, pos);
         }
         if (gone) {
           track.gone = true;

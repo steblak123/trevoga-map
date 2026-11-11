@@ -478,3 +478,38 @@ test('"в бік Бобринця", "На Кроп поки немає, цей �
   assert.equal(one(read, 5).count, 2);
   assert.ok(byId(read, 6).every((s) => s.count === 1), 'one each now');
 });
+
+// ---------- a post edited in Telegram ----------
+
+test('an edited post is read again: the target moves, keeps its id, later posts still follow it', () => {
+  const mk = (id, min, text, reply) => ({ id, date: new Date(Date.parse('2026-11-09T08:14:00Z') + min * 60000).toISOString(), text, reply: reply || null, channel: '@krop_vanek' });
+  const r = new Routes(window.NeptunBasemapPlaces);
+  r.kmPerUnit = KM;
+  r.defaultHome = HOME;
+  const now = Date.parse('2026-11-09T08:25:00Z');
+  r.add([mk(1, 0, 'Реактивний на Гурівку'), mk(2, 2, '→Братолюбівка'), mk(3, 5, '→Сугокліївка')], now);
+  const before = r.live(now).map((s) => s.track);
+  assert.equal(before.length, 1);
+  assert.deepEqual(r.route(before[0]).map((p) => p.name), ['Гурівка', 'Братолюбівка', 'Сугокліївка']);
+  const home = JSON.stringify(r.state('@krop_vanek').homePts);
+  // the same three posts come again (every poll does that), the second one corrected
+  const fresh = r.add([mk(1, 0, 'Реактивний на Гурівку'), mk(2, 2, '→Долинська/Тимкове'), mk(3, 5, '→Сугокліївка')], now);
+  assert.equal(fresh.length, 1, 'the edited post');
+  assert.equal(fresh[0].pos.name.split('/')[0], 'Долинська');
+  const live = r.live(now);
+  assert.deepEqual(live.map((s) => s.track), before, 'the same target');
+  assert.equal(live[0].pos.name, 'Сугокліївка');
+  assert.equal(r.route(before[0])[1].name.split('/')[0], 'Долинська');
+  assert.equal(r.sightings.length, 3);
+  assert.equal(JSON.stringify(r.state('@krop_vanek').homePts), home, 'not learnt twice');
+  assert.equal(r.add([mk(1, 0, 'Реактивний на Гурівку'), mk(2, 2, '→Долинська/Тимкове'), mk(3, 5, '→Сугокліївка')], now).length, 0, 'nothing new the next time');
+  // edited so that it names no target any more
+  r.add([mk(3, 5, 'Відбій')], now);
+  assert.equal(r.live(now)[0].pos.name.split('/')[0], 'Долинська');
+
+  const intel = new Intel();
+  intel.add([mk(7, 0, 'Вибухи Знамʼянка')], now);
+  intel.add([mk(7, 0, 'Вибухи Олександрія')], now);
+  assert.equal(intel.posts.size, 1, 'the old text is gone');
+  assert.match([...intel.posts.values()][0].lines[0].text, /Олександрія/);
+});
