@@ -34,7 +34,11 @@
   const MAX_COST = 0.75; // of reach: a chain link more stretched than this is no clear one
   const CLEAR = 1.5; // the next candidate must cost this many times more (and 0.15 more) than the chosen one
   const SAME_KM = 160; // places of one line are no farther apart than this (a namesake)
-  const GROUP_MAX = 6; // a group of tracks is at most this many
+  const GROUP_MAX = 20; // a group of tracks is at most this many (a long flight is reported at ten places in eight minutes)
+  const NAMED_MAX = 6; // a line names at most this many places of tracks
+  const SEQ_MIN_MS = 10000; // a channel writes of one target one place after another: this soon after each other, not sooner…
+  const SEQ_MAX_MS = 5 * 60000; // …and not later
+  const SEQ_NEW = /(?:^|[\s(])(?:ще|інший|інша|інше|другий|другого|друга|другу|новий|нова|нові|нового|також|за ним|окремо)(?![а-яіїєґ])/i; // another one, not the same
   const CROSS_KM = 20; // a Shahed that nothing called a Shahed, of the same place as a missile, this near it…
   const CROSS_MS = 5 * 60000; // …and reported this soon after (or before) it is that missile
 
@@ -136,7 +140,7 @@
       const withKey = pool.filter((t) => t.key);
       for (const line of lines) {
         const named = withKey.filter((t) => line.keys.has(t.key));
-        if (named.length < 2 || named.length > GROUP_MAX) continue;
+        if (named.length < 2 || named.length > NAMED_MAX) continue;
         for (let i = 0; i < named.length; i++) {
           for (let j = i + 1; j < named.length; j++) {
             const x = named[i];
@@ -154,9 +158,67 @@
             const rel = relation(line.raw, x.key, y.key);
             if (!rel) continue;
             // x is the earlier place when the line says "x на y" (order 1)
-            const e = rel.order > 0 ? { a: x, b: y, type: rel.type } : { a: y, b: x, type: rel.type };
+            const e = rel.order > 0 ? { a: x, b: y, type: rel.type, line } : { a: y, b: x, type: rel.type, line };
             edges.push(e);
             if (ctx.log) ctx.log({ type: rel.type, a: e.a, b: e.b, line });
+          }
+        }
+      }
+
+      // ---- 1a. one channel, one target, one place after another: "реактивний далі на Седнів", a minute later
+      // "реактивний далі на Вересоч", then "…на Ядути". Only posts that are about one target (they name the places of
+      // one track, or of tracks the line puts together), that do not say "another", one after the other within a few
+      // minutes, no post about other targets between them, and the flight is as far as the kind can go.
+      const bysPost = new Map(); // channel|at -> { channel, at, lines, tracks: Set of ids }
+      const keyCount = new Map();
+      for (const t of withKey) keyCount.set(t.key, (keyCount.get(t.key) || 0) + 1);
+      for (const line of ctx.lines || []) {
+        const k = `${line.channel}|${line.at}`;
+        if (!bysPost.has(k)) bysPost.set(k, { channel: line.channel, at: line.at, lines: [], tracks: new Map(), many: false });
+        const post = bysPost.get(k);
+        post.lines.push(line);
+        if (SEQ_NEW.test(line.raw) || MANY.test(line.raw)) post.many = true;
+        for (const t of withKey) {
+          if (!line.keys.has(t.key)) continue;
+          if (line.mode && FAMILY[line.mode === 'plain' ? 'uav' : line.mode] !== FAMILY[t.kind] && !weak(t)) continue;
+          if (keyCount.get(t.key) > 1) post.many = true; // a namesake: which one?
+          post.tracks.set(t.id, t);
+        }
+      }
+      const seqCand = [];
+      const byChannel = new Map();
+      for (const post of bysPost.values()) {
+        if (!post.tracks.size) continue;
+        if (!byChannel.has(post.channel)) byChannel.set(post.channel, []);
+        byChannel.get(post.channel).push(post);
+      }
+      for (const posts of byChannel.values()) {
+        posts.sort((x, y) => x.at - y.at);
+        // one target? the tracks of a post are one when the lines of it put them together
+        const single = (post) => {
+          if (post.many) return false;
+          const ids = [...post.tracks.keys()];
+          if (ids.length === 1) return true;
+          const par = new Map(ids.map((i) => [i, i]));
+          const f = (i) => (par.get(i) === i ? i : f(par.get(i)));
+          for (const e of edges) if (e.line.channel === post.channel && e.line.at === post.at && par.has(e.a.id) && par.has(e.b.id)) par.set(f(e.a.id), f(e.b.id));
+          return new Set(ids.map(f)).size === 1;
+        };
+        for (let i = 0; i + 1 < posts.length; i++) {
+          const p1 = posts[i];
+          const p2 = posts[i + 1];
+          const dt = p2.at - p1.at;
+          if (dt < SEQ_MIN_MS || dt > SEQ_MAX_MS || !single(p1) || !single(p2)) continue;
+          for (const a of p1.tracks.values()) {
+            for (const b of p2.tracks.values()) {
+              if (a.id === b.id || a.key === b.key || !same(a, b) || p2.tracks.has(a.id) || p1.tracks.has(b.id)) continue;
+              // each track is of the post that updated it last (an older decision stays, see below)
+              if (a.at < p1.at - 60000 || a.at > p1.at + 150000 || b.at < p2.at - 60000 || b.at > p2.at + 150000 || a.at > b.at + 30000) continue;
+              const rate = Math.max(RATE[a.kind] || 0, RATE[b.kind] || 0);
+              const reach = (rate * Math.max(dt, 90000)) / 60000 + SLACK_KM + (a.dest ? DEST_SLACK_KM : 0) + (b.dest ? DEST_SLACK_KM : 0);
+              const d = ctx.distanceKm(a, b);
+              if (d <= reach) seqCand.push({ a, b, cost: d / reach, p1, p2 });
+            }
           }
         }
       }
@@ -172,15 +234,28 @@
 
       // ---- 2. the way it flew
       const out = new Set([...this.links.keys()]); // already have a newer one
-      for (const e of edges) if (e.type === 'route') out.add(e.a.id);
+      for (const e of edges) if (e.type !== 'alt') out.add(e.a.id);
       const into = new Set([...this.links.values()].map((l) => l.to));
+      // sequences of one channel: decided now, kept (like the flights below)
+      seqCand.sort((x, y) => x.cost - y.cost);
+      for (const c of seqCand) {
+        if (out.has(c.a.id) || into.has(c.b.id)) continue;
+        out.add(c.a.id);
+        into.add(c.b.id);
+        this.links.set(c.a.id, { to: c.b.id, kind: 'seq', at: ctx.now || 0 });
+        if (ctx.log) ctx.log({ type: 'seq', a: c.a, b: c.b, line: c.p2.lines[0], p1: c.p1, p2: c.p2 });
+      }
+      // a post that says "інший", "ще 1", "другий" about a track's place: that track is another target, not the next place
+      // of the one before
+      const another = (b, born) => (ctx.lines || []).some((l) => l.keys.has(b.key) && SEQ_NEW.test(l.raw) && l.at >= born.at - 90000 && l.at <= born.at + 60000);
       const cand = [];
       for (const b of pool) {
         const born = this.seen.get(b.id);
         if (!born || born.initial) continue; // how old it is, nobody knows
+        if (another(b, born)) continue;
         for (const a of pool) {
           if (a.id === b.id || FAMILY[a.kind] !== FAMILY[b.kind] || out.has(a.id) || a.at > born.at - GAP_MS || a.at < born.at - RETIRED_MS) continue;
-          if (into.has(b.id) || edges.some((e) => e.type === 'route' && ((e.b.id === b.id && e.a.id !== a.id) || (e.a.id === a.id && e.b.id === b.id)))) continue;
+          if (into.has(b.id) || edges.some((e) => e.type !== 'alt' && ((e.b.id === b.id && e.a.id !== a.id) || (e.a.id === a.id && e.b.id === b.id)))) continue;
           const dt = (born.at - a.at) / 60000;
           const rate = Math.max(RATE[a.kind] || 0, RATE[b.kind] || 0);
           const reach = rate * dt + SLACK_KM + (a.dest ? DEST_SLACK_KM : 0) + (b.dest ? DEST_SLACK_KM : 0);
@@ -249,7 +324,7 @@
       const alts = new Map(); // survivor id -> [the places it may be at instead]
       const base = ctx.base || (() => 0);
       for (const g of groups.values()) {
-        if (g.length < 2 || g.length > GROUP_MAX + 2) continue;
+        if (g.length < 2 || g.length > GROUP_MAX) continue;
         // the survivor: the newest — those within 45 s of the latest count as one time, then the one nothing
         // follows, then the one nearest to you (of "Мрин / Носівку" the worse case)
         const sure = g.some((t) => !weak(t)) ? g.filter((t) => !weak(t)) : g; // not a Shahed nothing called one

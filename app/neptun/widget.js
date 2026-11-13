@@ -65,7 +65,7 @@
     if (c && c.v === intel.version && c.u === t.updatedAt && c.f === fuseVer) return c.mode;
     if (hintCache.size > 3000) hintCache.clear();
     // a target that is several tracks (fuse.js): what the posts said of the places it was at counts as well
-    const a = intel.about(t, fuseCache.of.get(t.id));
+    const a = intel.about(t, fuseDone.of.get(t.id));
     hintCache.set(t.id, { v: intel.version, u: t.updatedAt, f: fuseVer, mode: a ? a.mode : null, at: a ? a.at : null, channel: a ? a.channel : '' });
     return a ? a.mode : null;
   });
@@ -393,6 +393,7 @@
   // the other places it may be at (altsOf: "Кам’янка / Сміла", a dashed line to each).
   const fuser = window.NeptunFuse ? new window.NeptunFuse() : null;
   let fuseCache = { k: '', hidden: new Set(), of: new Map(), alts: new Map() };
+  let fuseDone = fuseCache; // the last result that is complete: kinds are read by it while the next one is made
   let fuseVer = 0; // changes with what is merged: kinds are worked out again
   function fused() {
     const k = `${intel ? intel.version : 0}|${clientRev}`;
@@ -431,6 +432,7 @@
     const sig = [...res.of].map(([id, olds]) => `${id}:${olds.map((o) => o.id).join(',')}`).join('|');
     if (sig !== (prev.sig || '')) fuseVer++;
     res.sig = sig;
+    fuseDone = res;
     return res;
   }
   // The tracks a target was reported as before, oldest first (not the other places it may be at).
@@ -445,7 +447,7 @@
     if (!olds.length) return null;
     const names = olds.map((o) => o.locality || o.district || o.region).filter(Boolean);
     const way = names.filter((n, i) => n !== names[i - 1] && n !== t.locality);
-    return way.length ? way : null;
+    return way.length > 5 ? ['…', ...way.slice(-5)] : way.length ? way : null; // the last five places of a long flight
   };
   // The tracks a target stands for (its way and its other places), for what the posts said of any of them.
   const oldsOf = (t) => (t && !t.tg ? fused().of.get(t.id) || [] : []);

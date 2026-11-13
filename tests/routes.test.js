@@ -603,6 +603,30 @@ test('fuse: of several jets over one place none is taken for another; the old on
   assert.equal(i.update([trk('p', 'Ромни', 50.75, 33.47, '13:00', { count: 2 }), trk('q', 'Талалаївка', 50.84, 33.14, '13:04')], fuseCtx('13:04')).hidden.size, 0);
 });
 
+test('fuse: a channel that writes of one target one place after another: those places are one target', () => {
+  const sich = (hm, text) => line(hm, text, 'Північна Січ');
+  const sedniv = trk('sedniv', 'Седнів', 51.7, 31.64, '12:37');
+  const veresoch = trk('veresoch', 'Вересоч', 51.4, 31.8, '12:40');
+  const yaduty = trk('yaduty', 'Ядути', 51.41, 32.3, '12:41');
+  const lines = [sich('12:37', 'реактивний далі на Седнів.'), sich('12:40', 'реактивний далі на Вересоч'), sich('12:41', 'реактивний далі на Ядути.')];
+  const f = new Fuser();
+  f.update([sedniv], fuseCtx('12:37', lines.slice(0, 1)));
+  assert.equal(f.update([sedniv, veresoch], fuseCtx('12:40', lines.slice(0, 2))).hidden.size, 1, 'Седнів is the way of Вересоч');
+  const r = f.update([sedniv, veresoch, yaduty], fuseCtx('12:41', lines));
+  assert.deepEqual([...r.hidden].sort(), ['sedniv', 'veresoch']);
+  assert.deepEqual(r.of.get('yaduty').map((o) => o.id), ['veresoch', 'sedniv']);
+  // "інший реактивний …" or "Ще 1 …": not the next place of the one before
+  for (const other of [[sich('12:37', 'реактивний далі на Седнів.'), sich('12:40', 'інший реактивний на Вересоч')], [sich('12:37', 'реактивний далі на Седнів.'), sich('12:40', 'Ще 1 на Вересоч')]]) {
+    const g = new Fuser();
+    g.update([sedniv], fuseCtx('12:37', other.slice(0, 1)));
+    assert.equal(g.update([sedniv, veresoch], fuseCtx('12:40', other)).hidden.size, 0, other[1].raw);
+  }
+  // two targets in one post are not one: "Реактивний на Седнів ⏎ Реактивний на Вересоч" and then "…на Ядути"
+  const h = new Fuser();
+  h.update([sedniv, veresoch], fuseCtx('12:40', [sich('12:37', 'Реактивний на Седнів'), sich('12:37', 'Реактивний на Вересоч')]));
+  assert.equal(h.update([sedniv, veresoch, yaduty], fuseCtx('12:41', [sich('12:37', 'Реактивний на Седнів'), sich('12:37', 'Реактивний на Вересоч'), sich('12:41', 'реактивний далі на Ядути.')])).hidden.size, 0, 'which of the two?');
+});
+
 test('fuse: a Shahed nothing called a Shahed next to a missile is that missile ("бандероль")', () => {
   const f = new Fuser();
   const hradyzk = trk('hradyzk', 'Градизьк', 49.23, 33.13, '12:42', { kind: 'missile', dest: true });
@@ -637,4 +661,19 @@ test('"бандероль" is a missile: the posts about a Shahed track\'s place
   assert.notEqual((intel.about(t('Корабел')) || {}).mode, 'missile');
   // a merged target: what was written of the places it was at counts
   assert.equal(intel.about(t('Невідоме місце'), [t('Градизьк')]).mode, 'missile');
+});
+
+test('intel: the sources of a merged target are those of all the places it was reported at; lines are kept for fuse.js', () => {
+  const intel = new Intel();
+  const now = UTC('10:45');
+  intel.add([
+    { channel: '@monitoring_zaxid', date: new Date(UTC('10:39')).toISOString(), text: '1 реактивна герань на н.п. Долина / Хоростків' },
+    { channel: '@kudy_letyt', date: new Date(UTC('10:43')).toISOString(), text: 'Реактивний БпЛА курсом на Чортків' },
+  ], now);
+  const mk = (locality) => ({ id: locality, type: 'uav', locality, region: 'Тернопільська область', updatedAt: new Date(UTC('10:44')).toISOString() });
+  assert.deepEqual(intel.sources(mk('Чортків'), 'uav', 3).map((x) => x.channel), ['@kudy_letyt']);
+  assert.deepEqual(intel.sources(mk('Чортків'), 'uav', 3, [mk('Долина')]).map((x) => x.channel).sort(), ['@kudy_letyt', '@monitoring_zaxid']);
+  const lines = intel.recentLines(now);
+  assert.equal(lines.length, 2);
+  assert.ok(lines.some((l) => l.raw === '1 реактивна герань на н.п. Долина / Хоростків' && l.keys.has(Intel.placeKey('Долина'))));
 });
