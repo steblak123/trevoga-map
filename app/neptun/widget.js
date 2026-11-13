@@ -322,7 +322,7 @@
     const p = predict(t, now);
     const trail = (Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon));
     let o = null;
-    const way = wayTracks(t);
+    const way = pathTracks(t);
     if (way.length && Geo.distanceKm(way[0].lat, way[0].lon, p.lat, p.lon) > 3) o = { lat: way[0].lat, lon: way[0].lon, est: false };
     else if (trail.length && Geo.distanceKm(trail[0].lat, trail[0].lon, p.lat, p.lon) > 3) o = { lat: trail[0].lat, lon: trail[0].lon, est: false };
     else if (Geo.distanceKm(t.lat, t.lon, p.lat, p.lon) > 3) o = { lat: t.lat, lon: t.lon, est: false };
@@ -441,6 +441,9 @@
     const alts = new Set((fused().alts.get(t.id) || []).map((a) => a.id));
     return (fused().of.get(t.id) || []).filter((o) => !alts.has(o.id)).reverse();
   };
+  // The way worth drawing: the last place it was reported at, if that is not farther than 80 km (a long flight over ten
+  // places is a zigzag of reports, not a line): one clean leg to where it is now.
+  const pathTracks = (t) => wayTracks(t).filter((o) => Geo.distanceKm(o.lat, o.lon, t.lat, t.lon) <= 80).slice(-1);
   // The places of them as words ("Долина → Хоростків → Копичинці"), or null.
   const wayOf = (t) => {
     const olds = wayTracks(t);
@@ -1372,7 +1375,7 @@
       g.style.setProperty('--c', metaOf(t).color);
       // Where it came from, in straight legs between its turns: reports a few km to the side are noise.
       // (and the places it was reported at as other tracks, which are merged into this one)
-      const raw = [...(pick ? wayTracks(t).map((o) => project(o.lat, o.lon)) : []), ...(Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon)).map((q) => project(q.lat, q.lon))];
+      const raw = [...(pick ? pathTracks(t).map((o) => project(o.lat, o.lon)) : []), ...(Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon)).map((q) => project(q.lat, q.lon))];
       raw.push(project(t.lat, t.lon), [p.x, p.y]);
       const pts = pick ? straight(raw, TRAIL_TOL_KM / kmPerUnit) : [];
       let len = 0;
