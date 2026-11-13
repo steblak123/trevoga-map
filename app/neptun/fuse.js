@@ -122,7 +122,7 @@
         // gone, or the old one was updated well after the new one appeared: it flies on by itself
         if (!a || !b || (born && a.at > born.at + 90000)) this.links.delete(from);
       }
-      const fits = (t) => FAMILY[t.kind] && !(t.count > 1);
+      const fits = (t) => FAMILY[t.kind] && !(t.count > 1) && !!t.key; // a track with no place of its own has no way to tell
       const pool = tracks.filter(fits);
       // a Shahed nothing has called a Shahed (NEPTUN's default kind): it may be a missile the posts did not name
       const weak = (t) => t.kind === 'uav' && !t.proven && !(t.count > 1);

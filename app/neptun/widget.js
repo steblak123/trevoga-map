@@ -105,6 +105,9 @@
         const o = way[way.length - 1];
         if (Geo.distanceKm(o.lat, o.lon, t.lat, t.lon) >= 5) return { heading: Geo.bearing(o.lat, o.lon, t.lat, t.lon), at: 0, by: 'moves' };
       }
+      // …or the course one of its other tracks had (the newest that had one)
+      const had = oldsOf(t).find((o) => Number.isFinite(o.heading));
+      if (had) return { heading: had.heading, at: 0, by: 'moves' };
       // Never over NEPTUN's own course (at: 0): how it moved; the post's "з Харківщини"; a KAB from the front.
       const h = courseByMoves(t);
       if (h != null) return { heading: h, at: 0, by: 'moves' };
@@ -2281,6 +2284,10 @@
   }
 
   function renderAll() {
+    // The picked target became one track of a bigger picture (fuse.js): the pick goes to the one that stands for it.
+    if (selected && !selected.startsWith('tg:') && fused().hidden.has(selected)) {
+      for (const [id, olds] of fused().of) if (olds.some((o) => o.id === selected)) selected = id;
+    }
     drawAreas();
     refresh();
   }
