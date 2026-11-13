@@ -533,6 +533,7 @@ test('fuse: the words between two places make them one target or not', () => {
   assert.equal(rel("Путивль > Дубов'язівка реактивний", 'Путивль', "Дубов'язівка").type, 'route');
   assert.equal(rel('Реактивний через Осипок на Широке.', 'Осипок', 'Широке').type, 'route');
   assert.equal(rel('Від Миролюбівки розвертається на Вільнянськ.', 'Миролюбівки', 'Вільнянськ').order, 1);
+  assert.equal(rel('Шахед на Славгород з Запоріжжя', 'Славгород', 'Запоріжжя').order, -1, 'the second place is where it came from');
   assert.equal(rel('Біленьке, Комишуваха', 'Біленьке', 'Комишуваха'), null, 'a list');
   assert.equal(rel('Реактивний БпЛА курсом на Борзну, Ніжин', 'Борзну', 'Ніжин'), null, 'a list');
   assert.equal(rel('Реактивний на Миролюбівку. Реактивний на Біленьке.', 'Миролюбівку', 'Біленьке'), null, 'two sentences');
@@ -631,6 +632,9 @@ test('"бандероль" is a missile: the posts about a Shahed track\'s place
   assert.equal(intel.about(t('Градизьк')).mode, 'missile');
   assert.equal(intel.about(t('Оржиця')).mode, 'missile', 'under the header "(Бандеролі):"');
   assert.equal(intel.about(t('Лубни')).mode, 'plain');
+  // "малий ракетний корабель" is no missile, and a microdistrict called Корабел is no ship
+  intel.add([{ channel: '@newspn', date: new Date(UTC('12:43')).toISOString(), text: 'Атаковано малий ракетний корабель Балтійського флоту.\nПовідомляється про Корабел.' }], now);
+  assert.notEqual((intel.about(t('Корабел')) || {}).mode, 'missile');
   // a merged target: what was written of the places it was at counts
   assert.equal(intel.about(t('Невідоме місце'), [t('Градизьк')]).mode, 'missile');
 });

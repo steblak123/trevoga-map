@@ -89,7 +89,9 @@
     if (words.some((w) => !BETWEEN.has(w) && !ALT_WORDS.has(w))) return null;
     const marks = between.replace(WORD, ' ');
     const dash = /(?:^|\s)[-–—](?:\s|$)/.test(between);
-    const order = second === b ? 1 : -1;
+    // "на Славгород з Запоріжжя": the second place is where it came from
+    const fromSecond = /(?:^|\s)(?:з|із|зі|від)\s*$/.test(between);
+    const order = (second === b ? 1 : -1) * (fromSecond ? -1 : 1);
     if (/[/|\\]/.test(marks) || words.some((w) => ALT_WORDS.has(w))) return { type: 'alt', order };
     if (/[→>➡]/.test(marks) || dash || words.length) return { type: 'route', order };
     return null;

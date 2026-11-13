@@ -27,6 +27,9 @@
     ['kab', /(?:^|[^а-яіїєґ])каб(?:и|ів|ами|ам|ах|у)?(?![а-яіїєґ])|авіабомб|керован/i], // \b knows no Cyrillic
     ['plain', /шахед|мопед|бпла|герань|гербер|дрон|балалайк|🛵|🏍/i],
   ];
+  // Words that make a post about a missile and not about the word "ракетний" ("малий ракетний корабель", "ракетні війська"):
+  // what turns a "БпЛА" track of NEPTUN into a missile.
+  const STRONG_MISSILE = /бандерол|бамбарол|крилат|калібр|іскандер|кинджал|х-?101|х-?59|х-?22|балістик|(?:^|[^а-яіїєґ])кр(?![а-яіїєґ])/i;
   const ALERT_LINE = /відбій|тривог|укритт/i; // air-raid notices name districts, not targets
   // Explosions: a line that says they were heard or hit, not a warning that they may come.
   const BOOM = /вибух|прил[іи]т|прильот|влучанн|детонац/i;
@@ -139,21 +142,27 @@
         times.push(at);
         this.seen.set(same, times);
         let mode = null;
+        let strong = false; // the line that gave the kind says it with a word that is a missile for sure
         const lines = [];
         for (const raw of m.text.split(/\n+/)) {
           const line = raw.trim();
           if (!line) continue;
-          if (JET.test(line) && !NOT_JET.test(line)) mode = 'jet';
-          else {
+          if (JET.test(line) && !NOT_JET.test(line)) {
+            mode = 'jet';
+            strong = false;
+          } else {
             const k = KINDS.find(([, re]) => re.test(line));
-            if (k) mode = k[0];
+            if (k) {
+              mode = k[0];
+              strong = STRONG_MISSILE.test(line) && !NOT_BOOM.test(line);
+            }
           }
           if (ALERT_LINE.test(line)) continue;
           const ws = words(line).map(stem);
           if (!ws.length) continue;
           const keys = new Set(ws);
           for (let i = 0; i + 1 < ws.length; i++) keys.add(`${ws[i]} ${ws[i + 1]}`); // two-word places: "Біла Церква"
-          lines.push({ mode, keys, text: line.length > 120 ? line.slice(0, 119) + '…' : line, raw: line.slice(0, 240), boom: BOOM.test(line) && !NOT_BOOM.test(line) });
+          lines.push({ mode, keys, text: line.length > 120 ? line.slice(0, 119) + '…' : line, raw: line.slice(0, 240), strong, boom: BOOM.test(line) && !NOT_BOOM.test(line) });
         }
         this.posts.set(key, { at, channel: String(m.channel || '').trim(), lines });
         added = true;
@@ -188,7 +197,7 @@
         for (const line of p.lines) {
           for (const k of line.keys) {
             if (!this.index.has(k)) this.index.set(k, []);
-            this.index.get(k).push({ at: p.at, mode: line.mode, channel: p.channel, text: line.text });
+            this.index.get(k).push({ at: p.at, mode: line.mode, channel: p.channel, text: line.text, strong: line.strong });
           }
         }
       }
@@ -341,7 +350,7 @@
       const list = all.filter((x) => x.mode === 'jet' || x.mode === 'plain');
       // "Бандероль курсом на Градизьк", "Крилата ракета на Світловодськ": NEPTUN made a Shahed track of a post
       // that names no kind; it is a missile when the posts that say so are no fewer than those about Shaheds.
-      const missiles = all.filter((x) => x.mode === 'missile');
+      const missiles = all.filter((x) => x.mode === 'missile' && x.strong);
       if (missiles.length && missiles.length >= list.length) return { mode: 'missile', at: missiles[0].at, channel: missiles[0].channel };
       const jets = list.filter((x) => x.mode === 'jet');
       const channels = new Set(jets.map((x) => x.channel));
