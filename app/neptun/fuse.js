@@ -109,6 +109,7 @@
       this.seen = new Map(); // id -> { at, lat, lon, initial }: the first update of a track as it was seen
       this.links = new Map(); // old id -> { to, kind: 'chain', at }: decided by the way it flew (kept)
       this.primed = false; // the tracks seen first are of unknown age
+      this.words = new Map(); // 'a>b' -> { a, b, type }: what the posts said of two tracks stays said while both live
     }
 
     // tracks: [{ id, lat, lon, at, kind, proven, count, dest, heading, key, loc }] (kind: 'jet' | 'uav' | 'missile' | …).
@@ -165,6 +166,13 @@
           }
         }
       }
+
+      // what a post said stays said (its line goes out of the window long before the tracks do)
+      for (const e of edges) this.words.set(`${e.a.id}>${e.b.id}`, { a: e.a.id, b: e.b.id, type: e.type });
+      for (const [k, w] of [...this.words]) {
+        if (!byId.has(w.a) || !byId.has(w.b)) this.words.delete(k);
+      }
+      const spoken = [...this.words.values()].map((w) => ({ a: byId.get(w.a), b: byId.get(w.b), type: w.type }));
 
       // ---- 1a. one channel, one target, one place after another: "реактивний далі на Седнів", a minute later
       // "реактивний далі на Вересоч", then "…на Ядути". Only posts that are about one target (they name the places of
@@ -235,7 +243,7 @@
 
       // ---- 2. the way it flew
       const out = new Set([...this.links.keys()]); // already have a newer one
-      for (const e of edges) if (e.type !== 'alt') out.add(e.a.id);
+      for (const e of spoken) if (e.type !== 'alt') out.add(e.a.id);
       const into = new Set([...this.links.values()].map((l) => l.to));
       // sequences of one channel: decided now, kept (like the flights below)
       seqCand.sort((x, y) => x.cost - y.cost);
@@ -256,7 +264,7 @@
         if (another(b, born)) continue;
         for (const a of pool) {
           if (a.id === b.id || FAMILY[a.kind] !== FAMILY[b.kind] || out.has(a.id) || a.at > born.at - GAP_MS || a.at < born.at - RETIRED_MS) continue;
-          if (into.has(b.id) || edges.some((e) => e.type !== 'alt' && ((e.b.id === b.id && e.a.id !== a.id) || (e.a.id === a.id && e.b.id === b.id)))) continue;
+          if (into.has(b.id) || spoken.some((e) => e.type !== 'alt' && ((e.b.id === b.id && e.a.id !== a.id) || (e.a.id === a.id && e.b.id === b.id)))) continue;
           const dt = (born.at - a.at) / 60000;
           const rate = Math.max(RATE[a.kind] || 0, RATE[b.kind] || 0);
           const reach = rate * dt + SLACK_KM + (a.dest ? DEST_SLACK_KM : 0) + (b.dest ? DEST_SLACK_KM : 0);
@@ -300,7 +308,7 @@
       };
       const altIds = new Set();
       const followed = new Set(); // has a later place (a route or a chain goes on from it)
-      for (const e of edges) {
+      for (const e of spoken) {
         union(e.a.id, e.b.id);
         if (e.type === 'alt') altIds.add(e.a.id).add(e.b.id);
         else followed.add(e.a.id);
