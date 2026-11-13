@@ -516,48 +516,121 @@ test('an edited post is read again: the target moves, keeps its id, later posts 
 
 // ---------- fuse.js: one target, several tracks ----------
 
-test('a jet NEPTUN put at four places one after another is one target; two jets on one route stay two', () => {
-  const { fuse } = require('../app/neptun/fuse.js');
-  const km = (a, b) => Geo.distanceKm(a.lat, a.lon, b.lat, b.lon);
-  const at = (hm) => Date.parse(`2026-11-10T${hm}:00Z`);
-  const mk = (id, lat, lon, hm, kind, extra) => ({ id, lat, lon, at: at(hm), born: at(hm), kind, proven: true, ...extra });
-  // Долина / Хоростків 10:39 -> Хоростків 10:40 -> Копичинці 10:42 -> Чортків 10:43 (Тернопільщина)
-  const chain = [mk('dolyna', 49.2, 25.85, '10:39', 'uav', { fast: true }), mk('khor', 49.21, 25.92, '10:40', 'jet'), mk('kop', 49.1, 25.93, '10:42', 'jet'), mk('chort', 49.02, 25.8, '10:43', 'jet')];
-  const r = fuse(chain, km);
-  assert.deepEqual([...r.hidden].sort(), ['dolyna', 'khor', 'kop']);
-  assert.deepEqual(r.of.get('chort').map((o) => o.id), ['kop', 'khor', 'dolyna']);
-  // the second jet follows the first: its track was there before the first one's last update
-  const two = [mk('first', 49.02, 25.8, '10:43', 'jet', { born: at('10:30') }), mk('second', 49.21, 25.92, '10:40', 'jet', { born: at('10:36') })];
-  assert.equal(fuse(two, km).hidden.size, 0);
-  // plain Shaheds 40 km apart, groups, other kinds: untouched
-  assert.equal(fuse([mk('a', 49, 25, '10:40', 'uav'), mk('b', 49.36, 25, '10:42', 'uav')], km).hidden.size, 0);
-  assert.equal(fuse([mk('a', 49, 25, '10:40', 'jet', { count: 2 }), mk('b', 49.05, 25, '10:42', 'jet')], km).hidden.size, 0);
-  assert.equal(fuse([mk('a', 49, 25, '10:40', 'kab'), mk('b', 49.05, 25, '10:42', 'kab')], km).hidden.size, 0);
+const { Fuser, relation } = require('../app/neptun/fuse.js');
+const kmBetween = (a, b) => Geo.distanceKm(a.lat, a.lon, b.lat, b.lon);
+const UTC = (hm) => Date.parse(`2026-11-10T${hm}Z`);
+// A track as widget.js hands it over: { id, lat, lon, at, kind, proven, count, dest, heading, key, loc }.
+const trk = (id, loc, lat, lon, hm, extra) => ({ id, loc, lat, lon, at: UTC(hm), born: UTC(hm), kind: 'jet', proven: true, count: 1, dest: true, heading: null, key: Intel.placeKey(loc), ...extra });
+const line = (hm, text, channel = '@x', mode = 'jet') => ({ at: UTC(hm), channel, mode, raw: text, keys: new Set(text.split(/[^A-Za-zА-Яа-яІіЇїЄєҐґ'’ʼ-]+/).filter((w) => w.length >= 3).map((w) => Intel.placeKey(w))) });
+const fuseCtx = (hm, lines = []) => ({ now: UTC(hm), distanceKm: kmBetween, lines, base: () => 0 });
+
+test('fuse: the words between two places make them one target or not', () => {
+  const k = Intel.placeKey;
+  const rel = (raw, a, b) => relation(raw, k(a), k(b));
+  assert.equal(rel('відвернув, реактивний Яблуневе на Мрин.', 'Яблуневе', 'Мрин').type, 'route');
+  assert.equal(rel('Реактивний 🛵 на Мрин / Носівку', 'Мрин', 'Носівку').type, 'alt');
+  assert.equal(rel('Реактивний від Біленьке в бік Василівки.', 'Біленьке', 'Василівки').type, 'route');
+  assert.equal(rel("Путивль > Дубов'язівка реактивний", 'Путивль', "Дубов'язівка").type, 'route');
+  assert.equal(rel('Реактивний через Осипок на Широке.', 'Осипок', 'Широке').type, 'route');
+  assert.equal(rel('Від Миролюбівки розвертається на Вільнянськ.', 'Миролюбівки', 'Вільнянськ').order, 1);
+  assert.equal(rel('Біленьке, Комишуваха', 'Біленьке', 'Комишуваха'), null, 'a list');
+  assert.equal(rel('Реактивний БпЛА курсом на Борзну, Ніжин', 'Борзну', 'Ніжин'), null, 'a list');
+  assert.equal(rel('Реактивний на Миролюбівку. Реактивний на Біленьке.', 'Миролюбівку', 'Біленьке'), null, 'two sentences');
+  assert.equal(rel('ці 2 реактивні стандартно Корюківка - Мена/Сосниця - Борзна - Ічня', 'Сосниця', 'Борзна'), null, 'two targets');
+  assert.equal(rel('Реактивний БпЛА курсом на Ніжин', 'Ніжин', 'Мрин'), null, 'one place');
 });
 
-test('"бандероль" is a missile: the Shahed tracks by Світловодськ are the cruise missile there', () => {
-  const { fuse } = require('../app/neptun/fuse.js');
-  const km = (a, b) => Geo.distanceKm(a.lat, a.lon, b.lat, b.lon);
-  const at = (hm) => Date.parse(`2026-11-10T${hm}:00Z`);
-  const tracks = [
-    { id: 'hradyzk', lat: 49.23, lon: 33.13, at: at('12:42'), born: at('12:41'), kind: 'missile', proven: true }, // "Бандероль курсом на Градизьк"
-    { id: 'missile', lat: 49.05, lon: 33.24, at: at('12:43'), born: at('12:42'), kind: 'missile', proven: true },
-    { id: 'shahed', lat: 49.07, lon: 33.2, at: at('12:44'), born: at('12:43'), kind: 'uav', proven: false }, // "Над водою, летить в бік Світловодська"
-  ];
-  const r = fuse(tracks, km);
-  assert.deepEqual([...r.hidden].sort(), ['hradyzk', 'shahed']);
-  assert.equal(fuse([{ ...tracks[2], proven: true }, tracks[1]], km).hidden.size, 0, 'a Shahed the posts call a Shahed stays');
+test('fuse: "Яблуневе на Мрин" — the track at Яблуневе is the way of the one at Мрин, "Мрин / Носівку" are its other places', () => {
+  const f = new Fuser();
+  const yab = trk('yab', 'Яблуневе', 51.07, 31.55, '12:52');
+  const mryn = trk('mryn', 'Мрин', 50.5, 31.45, '12:54');
+  const nos = trk('nos', 'Носівка', 51.0, 31.6, '12:54');
+  const lines = [line('12:53', 'відвернув, реактивний Яблуневе на Мрин.', 'Північна Січ'), line('12:54', 'Реактивний 🛵 на Мрин / Носівку', '@horizon')];
+  const r = f.update([yab, mryn, nos], fuseCtx('12:55', lines));
+  assert.equal(r.hidden.size, 2);
+  const top = [yab, mryn, nos].find((t) => !r.hidden.has(t.id));
+  assert.ok(r.of.get(top.id).length === 2, 'the other two stand for it');
+  assert.ok([...r.alts.values()].flat().length >= 1, 'the other place of the same post');
+  // the posts of two separate lists: two targets
+  const g = new Fuser();
+  const lists = [line('12:54', 'Реактивний на Миролюбівку.'), line('12:54', 'Реактивний на Біленьке.')];
+  assert.equal(g.update([trk('a', 'Миролюбівка', 47.83, 35.7, '12:54'), trk('b', 'Біленьке', 47.63, 35.03, '12:54')], fuseCtx('12:55', lists)).hidden.size, 0);
+});
 
+test('fuse: a lone jet reported at four places in turn is one target; its old tracks stay hidden as it goes on', () => {
+  const f = new Fuser();
+  const dolyna = trk('dolyna', 'Долина', 49.2, 25.85, '10:39', { dest: false, heading: null });
+  const khor = trk('khor', 'Хоростків', 49.21, 25.92, '10:41');
+  const kop = trk('kop', 'Копичинці', 49.1, 25.93, '10:43');
+  const chort = trk('chort', 'Чортків', 49.02, 25.8, '10:45');
+  assert.equal(f.update([dolyna], fuseCtx('10:40')).hidden.size, 0); // the first sight: age unknown
+  assert.deepEqual([...f.update([dolyna, khor], fuseCtx('10:41')).hidden], ['dolyna']);
+  assert.deepEqual([...f.update([dolyna, khor, kop], fuseCtx('10:43')).hidden].sort(), ['dolyna', 'khor']);
+  const r = f.update([dolyna, khor, kop, chort], fuseCtx('10:45'));
+  assert.deepEqual([...r.hidden].sort(), ['dolyna', 'khor', 'kop']);
+  assert.deepEqual(r.of.get('chort').map((o) => o.id), ['kop', 'khor', 'dolyna']);
+  // ten minutes on the newest one is updated again: nothing comes back
+  const later = { ...chort, at: UTC('10:55') };
+  const again = f.update([dolyna, khor, kop, later], fuseCtx('10:55'));
+  assert.deepEqual([...again.hidden].sort(), ['dolyna', 'khor', 'kop'], 'decided once');
+  // the newest goes from the feed first (rarely): the one before it is the target now
+  assert.deepEqual([...f.update([dolyna, khor, kop], fuseCtx('10:56')).hidden].sort(), ['dolyna', 'khor']);
+});
+
+test('fuse: of several jets over one place none is taken for another; the old one updated again is alive', () => {
+  const f = new Fuser();
+  // three jets reported round Zaporizhzhia: each new track could be any of the old ones
+  const old = [trk('a', 'Миролюбівка', 48.15, 35.3, '13:41'), trk('b', 'Біленьке', 47.85, 35.3, '13:41'), trk('c', 'Солоне', 48.0, 35.52, '13:41')];
+  f.update(old, fuseCtx('13:42'));
+  const fresh = trk('d', 'Гнаровське', 48.0, 35.3, '13:44');
+  assert.equal(f.update([...old, fresh], fuseCtx('13:44')).hidden.size, 0, 'not clear: three are as near');
+  // one clear case: nothing else near
+  const g = new Fuser();
+  const lone = trk('lone', 'Кобеляки', 49.2, 34.2, '13:41');
+  g.update([lone, trk('far', 'Київ', 50.4, 30.5, '13:41')], fuseCtx('13:42'));
+  const next = trk('next', 'Білики', 49.3, 34.4, '13:44');
+  assert.deepEqual([...g.update([lone, trk('far', 'Київ', 50.4, 30.5, '13:41'), next], fuseCtx('13:44')).hidden], ['lone']);
+  // the old one is updated after the new one appeared: it flies on by itself, the link goes
+  const upd = { ...lone, at: UTC('13:47') };
+  assert.equal(g.update([upd, trk('far', 'Київ', 50.4, 30.5, '13:41'), next], fuseCtx('13:47')).hidden.size, 0);
+  // tracks of one post (the same minute) are not one another's way; groups ("2х") are not merged at all
+  const h = new Fuser();
+  h.update([trk('p', 'Ромни', 50.75, 33.47, '13:00')], fuseCtx('13:00'));
+  assert.equal(h.update([trk('p', 'Ромни', 50.75, 33.47, '13:00'), trk('q', 'Талалаївка', 50.84, 33.14, '13:00')], fuseCtx('13:01')).hidden.size, 0);
+  const i = new Fuser();
+  i.update([trk('p', 'Ромни', 50.75, 33.47, '13:00', { count: 2 })], fuseCtx('13:00'));
+  assert.equal(i.update([trk('p', 'Ромни', 50.75, 33.47, '13:00', { count: 2 }), trk('q', 'Талалаївка', 50.84, 33.14, '13:04')], fuseCtx('13:04')).hidden.size, 0);
+});
+
+test('fuse: a Shahed nothing called a Shahed next to a missile is that missile ("бандероль")', () => {
+  const f = new Fuser();
+  const hradyzk = trk('hradyzk', 'Градизьк', 49.23, 33.13, '12:42', { kind: 'missile', dest: true });
+  const missile = trk('missile', 'Світловодськ', 49.05, 33.24, '12:43', { kind: 'missile' });
+  const shahed = trk('shahed', 'Світловодськ', 49.07, 33.2, '12:44', { kind: 'uav', proven: false });
+  const lines = [line('12:43', '❗️ Бандероль над водосховищем курсом на Градизьк/Світловодськ.', '@PoltavaRadar', 'missile')];
+  const r = f.update([hradyzk, missile, shahed], fuseCtx('12:45', lines));
+  assert.equal(r.hidden.has('shahed'), true);
+  assert.equal(r.hidden.has('missile') || r.hidden.has('hradyzk'), true);
+  assert.equal([hradyzk, missile, shahed].filter((t) => !r.hidden.has(t.id)).length, 1);
+  assert.equal([hradyzk, missile, shahed].find((t) => !r.hidden.has(t.id)).kind, 'missile', 'what is left is the missile');
+  // a Shahed the posts call a Shahed stays
+  const g = new Fuser();
+  assert.equal(g.update([missile, { ...shahed, proven: true }], fuseCtx('12:45')).hidden.size, 0);
+});
+
+test('"бандероль" is a missile: the posts about a Shahed track\'s place say so', () => {
   const intel = new Intel();
-  const now = at('12:44');
+  const now = UTC('12:44');
   intel.add([
-    { channel: '@PoltavaRadar', date: new Date(at('12:43')).toISOString(), text: '❗️ Бандероль над водосховищем курсом на Градизьк/Світловодськ.' },
-    { channel: '@kudy_letyt', date: new Date(at('12:41')).toISOString(), text: 'Бандероль курсом на Градизьк по межі з Черкащиною' },
-    { channel: '@x', date: new Date(at('12:40')).toISOString(), text: '🚀 Полтавщина (Бандеролі):\n→Оржиця/Черкащина.' },
-    { channel: '@y', date: new Date(at('12:40')).toISOString(), text: 'БпЛА на Лубни' },
+    { channel: '@PoltavaRadar', date: new Date(UTC('12:43')).toISOString(), text: '❗️ Бандероль над водосховищем курсом на Градизьк/Світловодськ.' },
+    { channel: '@kudy_letyt', date: new Date(UTC('12:41')).toISOString(), text: 'Бандероль курсом на Градизьк по межі з Черкащиною' },
+    { channel: '@x', date: new Date(UTC('12:40')).toISOString(), text: '🚀 Полтавщина (Бандеролі):\n→Оржиця/Черкащина.' },
+    { channel: '@y', date: new Date(UTC('12:40')).toISOString(), text: 'БпЛА на Лубни' },
   ], now);
-  const t = (locality) => ({ id: 't', type: 'uav', locality, region: 'Полтавська область', updatedAt: new Date(at('12:43')).toISOString() });
+  const t = (locality) => ({ id: 't', type: 'uav', locality, region: 'Полтавська область', updatedAt: new Date(UTC('12:43')).toISOString() });
   assert.equal(intel.about(t('Градизьк')).mode, 'missile');
   assert.equal(intel.about(t('Оржиця')).mode, 'missile', 'under the header "(Бандеролі):"');
   assert.equal(intel.about(t('Лубни')).mode, 'plain');
+  // a merged target: what was written of the places it was at counts
+  assert.equal(intel.about(t('Невідоме місце'), [t('Градизьк')]).mode, 'missile');
 });

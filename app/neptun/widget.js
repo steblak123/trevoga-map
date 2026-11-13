@@ -62,10 +62,11 @@
   window.NeptunTypes.setHint((t) => {
     if (!intel) return null;
     const c = hintCache.get(t.id);
-    if (c && c.v === intel.version && c.u === t.updatedAt) return c.mode;
+    if (c && c.v === intel.version && c.u === t.updatedAt && c.f === fuseVer) return c.mode;
     if (hintCache.size > 3000) hintCache.clear();
-    const a = intel.about(t);
-    hintCache.set(t.id, { v: intel.version, u: t.updatedAt, mode: a ? a.mode : null, at: a ? a.at : null, channel: a ? a.channel : '' });
+    // a target that is several tracks (fuse.js): what the posts said of the places it was at counts as well
+    const a = intel.about(t, fuseCache.of.get(t.id));
+    hintCache.set(t.id, { v: intel.version, u: t.updatedAt, f: fuseVer, mode: a ? a.mode : null, at: a ? a.at : null, channel: a ? a.channel : '' });
     return a ? a.mode : null;
   });
 
@@ -98,6 +99,12 @@
       }
       if (r && r.heading != null && r.points.length >= 2) return { heading: r.heading, at: r.at, by: 'posts' };
       if (t.tg || t.heading != null) return null;
+      // A target that is several tracks went from the one before to this one (fuse.js).
+      const way = wayTracks(t);
+      if (way.length) {
+        const o = way[way.length - 1];
+        if (Geo.distanceKm(o.lat, o.lon, t.lat, t.lon) >= 5) return { heading: Geo.bearing(o.lat, o.lon, t.lat, t.lon), at: 0, by: 'moves' };
+      }
       // Never over NEPTUN's own course (at: 0): how it moved; the post's "з Харківщини"; a KAB from the front.
       const h = courseByMoves(t);
       if (h != null) return { heading: h, at: 0, by: 'moves' };
@@ -312,7 +319,9 @@
     const p = predict(t, now);
     const trail = (Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon));
     let o = null;
-    if (trail.length && Geo.distanceKm(trail[0].lat, trail[0].lon, p.lat, p.lon) > 3) o = { lat: trail[0].lat, lon: trail[0].lon, est: false };
+    const way = wayTracks(t);
+    if (way.length && Geo.distanceKm(way[0].lat, way[0].lon, p.lat, p.lon) > 3) o = { lat: way[0].lat, lon: way[0].lon, est: false };
+    else if (trail.length && Geo.distanceKm(trail[0].lat, trail[0].lon, p.lat, p.lon) > 3) o = { lat: trail[0].lat, lon: trail[0].lon, est: false };
     else if (Geo.distanceKm(t.lat, t.lon, p.lat, p.lon) > 3) o = { lat: t.lat, lon: t.lon, est: false };
     else if (p.heading != null) {
       const speed = t.velocity && t.velocity.speedKmh > 0 ? t.velocity.speedKmh : 0;
@@ -372,105 +381,72 @@
     const f = fateFor(t);
     return !f || f.fate !== 'down' || Date.now() - f.at <= DOWN_SHOW_MS;
   };
-  const targets = () => [...client.list().filter((t) => shownYet(t) && !alternatives().hidden.has(t.id) && !fused().hidden.has(t.id)), ...channelTargets()].filter(visible);
+  const targets = () => [...client.list().filter((t) => shownYet(t) && !fused().hidden.has(t.id)), ...channelTargets()].filter(visible);
 
-  // ---------- one target, several places ----------
-  // A post that names places as alternatives ("курсом на Черкащину (Кам'янка/Сміла)") makes NEPTUN put a track at
-  // each of them: two markers with the same sources for one jet. Tracks of the same kind and size (one each),
-  // NEPTUN gave no course, reported within ALT_MIN of each other ALT_KM or less apart, and a line of a post about
-  // them naming both places with "/" or "або": one target. It stands at the place nearest to you (the worse
-  // case) and reads "Кам’янка / Сміла"; the others are not drawn or counted again.
-  const ALT_KM = 70;
-  const ALT_MIN = 10;
-  let altCache = { k: '', hidden: new Set(), of: new Map() };
-  function alternatives() {
-    const k = `${intel ? intel.version : 0}|${clientRev}|${home ? home.x + ',' + home.y : ''}|${mine.length}`;
-    if (altCache.k === k) return altCache;
-    const res = { k, hidden: new Set(), of: new Map() };
-    altCache = res; // before the work: targets() asks for it while it runs
-    const key = window.NeptunIntel && window.NeptunIntel.placeKey;
-    if (!intel || !key || !project) return res;
-    const family = (t) => (NO_COURSE_KINDS.has(kindOf(t)) ? 'drone' : kindOf(t));
-    const list = client.list().filter((t) => !t.areaOnly && t.locality && Number.isFinite(t.lat) && t.heading == null && !t.velocity && !(t.count > 1) && shownYet(t));
-    if (list.length < 2) return res;
-    const lines = new Map(); // id -> lines of the posts about it (and its own words)
-    const linesOf = (t) => {
-      if (!lines.has(t.id)) lines.set(t.id, [t.explanationShort, ...intel.mentions(t).map((m) => m.text)].filter(Boolean).flatMap((s) => String(s).split(/\n+/)));
-      return lines.get(t.id);
-    };
-    const names = (line) => ` ${key(line)} `;
-    const ALT = /[/|]|(?:^|\s)або(?:\s|$)/i;
-    const both = (a, b) => {
-      const ka = ` ${key(a.locality)} `;
-      const kb = ` ${key(b.locality)} `;
-      if (ka === kb) return false;
-      return [...linesOf(a), ...linesOf(b)].some((line) => ALT.test(line) && names(line).includes(ka) && names(line).includes(kb));
-    };
-    const parent = new Map(list.map((t) => [t.id, t.id]));
-    const find = (id) => (parent.get(id) === id ? id : find(parent.get(id)));
-    for (let i = 0; i < list.length; i++) {
-      for (let j = i + 1; j < list.length; j++) {
-        const a = list[i];
-        const b = list[j];
-        if (family(a) !== family(b)) continue;
-        if (Math.abs((Date.parse(a.confirmedAt || a.updatedAt) || 0) - (Date.parse(b.confirmedAt || b.updatedAt) || 0)) > ALT_MIN * 60000) continue;
-        const km = Geo.distanceKm(a.lat, a.lon, b.lat, b.lon);
-        if (km < 3 || km > ALT_KM || !both(a, b)) continue;
-        parent.set(find(a.id), find(b.id));
-      }
-    }
-    const groups = new Map();
-    for (const t of list) {
-      const r = find(t.id);
-      if (!groups.has(r)) groups.set(r, []);
-      groups.get(r).push(t);
-    }
-    for (const g of groups.values()) {
-      if (g.length < 2) continue;
-      const dist = (t) => {
-        if (!hasBase()) return 0;
-        const [x, y] = project(t.lat, t.lon);
-        const n = nearestAt(x, y);
-        return n ? n.km : 0;
-      };
-      g.sort((a, b) => dist(a) - dist(b) || (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
-      res.of.set(g[0].id, g.slice(1));
-      for (const t of g.slice(1)) res.hidden.add(t.id);
-    }
-    return res;
-  }
   // ---------- one target, several tracks (fuse.js) ----------
-  const firstSeen = new Map(); // track id -> when this widget first got it
-  let fuseCache = { k: '', hidden: new Set(), of: new Map() };
+  // NEPTUN makes a track of every place the posts name: "Мрин / Носівку" two, "Яблуневе на Мрин" two, a jet
+  // reported at Хоростків, then Копичинці, then Чортків three. fuse.js finds the tracks of one target by the
+  // words of the posts and by the way it flew; the newest stays, the others are its way so far (wayOf) or
+  // the other places it may be at (altsOf: "Кам’янка / Сміла", a dashed line to each).
+  const fuser = window.NeptunFuse ? new window.NeptunFuse() : null;
+  let fuseCache = { k: '', hidden: new Set(), of: new Map(), alts: new Map() };
+  let fuseVer = 0; // changes with what is merged: kinds are worked out again
   function fused() {
     const k = `${intel ? intel.version : 0}|${clientRev}`;
     if (fuseCache.k === k) return fuseCache;
-    const res = { k, hidden: new Set(), of: new Map() };
-    fuseCache = res; // before the work: kindOf() may ask for targets()
-    if (!window.NeptunFuse) return res;
-    const alt = alternatives().hidden;
-    const list = client
+    const res = { k, hidden: new Set(), of: new Map(), alts: new Map() };
+    const prev = fuseCache;
+    fuseCache = res; // before the work: kinds are asked for while it runs
+    if (!fuser || !project) {
+      res.k = ''; // not ready: asked again
+      return res;
+    }
+    const key = window.NeptunIntel && window.NeptunIntel.placeKey;
+    const tracks = client
       .list()
-      .filter((t) => !t.areaOnly && Number.isFinite(t.lat) && !alt.has(t.id) && shownYet(t) && !fateFor(t))
+      .filter((t) => !t.areaOnly && Number.isFinite(t.lat) && shownYet(t) && !fateFor(t))
       .map((t) => {
         const at = Date.parse(t.updatedAt || t.confirmedAt) || 0;
         const c = classify(t);
         const first = Array.isArray(t.trail) && t.trail.length ? Date.parse(t.trail[0].t) || at : at;
-        return { id: t.id, t, lat: t.lat, lon: t.lon, at, born: Math.min(at, first, firstSeen.get(t.id) || at), kind: c.kind, proven: t.type !== 'uav' || c.by != null, fast: c.by === 'maybe', count: t.count };
+        return { id: t.id, t, lat: t.lat, lon: t.lon, at, born: Math.min(at, first), kind: c.kind, proven: t.type !== 'uav' || c.by != null, count: t.count, dest: !!t.destination, heading: t.heading, key: key && t.locality && t.locality !== t.region ? key(t.locality) : '', loc: t.locality };
       });
-    const r = window.NeptunFuse(list, (a, b) => Geo.distanceKm(a.lat, a.lon, b.lat, b.lon));
+    const r = fuser.update(tracks, {
+      now: Date.now(),
+      distanceKm: (a, b) => Geo.distanceKm(a.lat, a.lon, b.lat, b.lon),
+      lines: intel ? intel.recentLines(Date.now()) : [],
+      base: (a) => {
+        if (!hasBase()) return 0;
+        const [x, y] = project(a.lat, a.lon);
+        const n = nearestAt(x, y);
+        return n ? n.km : 0;
+      },
+    });
     res.hidden = r.hidden;
     for (const [id, olds] of r.of) res.of.set(id, olds.map((o) => o.t));
+    for (const [id, alts] of r.alts) res.alts.set(id, alts.map((o) => o.t));
+    const sig = [...res.of].map(([id, olds]) => `${id}:${olds.map((o) => o.id).join(',')}`).join('|');
+    if (sig !== (prev.sig || '')) fuseVer++;
+    res.sig = sig;
     return res;
   }
-  // The places a target was reported at before, oldest first ("Долина → Хоростків → Копичинці"), or null.
-  const wayOf = (t) => {
-    const olds = t && !t.tg ? fused().of.get(t.id) : null;
-    if (!olds || !olds.length) return null;
-    const names = [...olds].reverse().map((o) => o.locality || o.district || o.region).filter(Boolean);
-    return names.filter((n, i) => n !== names[i - 1] && n !== t.locality);
+  // The tracks a target was reported as before, oldest first (not the other places it may be at).
+  const wayTracks = (t) => {
+    if (!t || t.tg) return [];
+    const alts = new Set((fused().alts.get(t.id) || []).map((a) => a.id));
+    return (fused().of.get(t.id) || []).filter((o) => !alts.has(o.id)).reverse();
   };
-  const altsOf = (t) => (t && !t.tg ? alternatives().of.get(t.id) || null : null);
+  // The places of them as words ("Долина → Хоростків → Копичинці"), or null.
+  const wayOf = (t) => {
+    const olds = wayTracks(t);
+    if (!olds.length) return null;
+    const names = olds.map((o) => o.locality || o.district || o.region).filter(Boolean);
+    const way = names.filter((n, i) => n !== names[i - 1] && n !== t.locality);
+    return way.length ? way : null;
+  };
+  // The tracks a target stands for (its way and its other places), for what the posts said of any of them.
+  const oldsOf = (t) => (t && !t.tg ? fused().of.get(t.id) || [] : []);
+  const altsOf = (t) => (t && !t.tg ? fused().alts.get(t.id) || null : null);
   const altName = (t) => {
     const alts = altsOf(t);
     return alts ? [t.locality, ...alts.map((a) => a.locality)].join(' / ') : null;
@@ -943,10 +919,18 @@
   const numbers = new Map();
   function numberTargets(list) {
     const ids = new Set(list.map((t) => t.id));
+    const was = new Map(numbers);
     for (const id of [...numbers.keys()]) if (!ids.has(id)) numbers.delete(id);
     const taken = new Set(numbers.values());
     for (const t of list) {
       if (numbers.has(t.id)) continue;
+      // took over from other tracks of the same target: keeps the lowest of their numbers
+      const inherited = oldsOf(t).map((o) => was.get(o.id)).filter((n) => n && !taken.has(n)).sort((x, y) => x - y)[0];
+      if (inherited) {
+        numbers.set(t.id, inherited);
+        taken.add(inherited);
+        continue;
+      }
       let n = 1;
       while (taken.has(n)) n++;
       numbers.set(t.id, n);
@@ -1382,7 +1366,8 @@
       const g = svgEl('g', { class: 'nep-trk' + (fast ? ' fast' : '') + (t.id === selected ? ' sel' : '') });
       g.style.setProperty('--c', metaOf(t).color);
       // Where it came from, in straight legs between its turns: reports a few km to the side are noise.
-      const raw = (Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon)).map((q) => project(q.lat, q.lon));
+      // (and the places it was reported at as other tracks, which are merged into this one)
+      const raw = [...(pick ? wayTracks(t).map((o) => project(o.lat, o.lon)) : []), ...(Array.isArray(t.trail) ? t.trail : []).filter((q) => Number.isFinite(q.lat) && Number.isFinite(q.lon)).map((q) => project(q.lat, q.lon))];
       raw.push(project(t.lat, t.lon), [p.x, p.y]);
       const pts = pick ? straight(raw, TRAIL_TOL_KM / kmPerUnit) : [];
       let len = 0;
@@ -2061,11 +2046,11 @@
   // Where the information about a target comes from: the channels that wrote about its place lately
   // (intel.js: name, time, the line) and how many sources NEPTUN counted.
   const CONFIRM_WORD = ['підтвердження', 'підтвердження', 'підтверджень'];
-  const sourcesOf = (t) => (intel ? intel.sources(t, kindOf(t), 3) : []);
+  const sourcesOf = (t) => (intel ? intel.sources(t, kindOf(t), 3, oldsOf(t)) : []);
   const channelUrl = (c) => (/^@[A-Za-z0-9_]{4,32}$/.test(c) ? `https://t.me/${c.slice(1)}` : null);
 
   function sourcesTip(t) {
-    const n = t.sourceCount || 0;
+    const n = Math.max(t.sourceCount || 0, ...oldsOf(t).map((o) => o.sourceCount || 0));
     const list = sourcesOf(t);
     const head = `<div class="tt-k">Джерела${n ? `<small>${n} ${plural(n, CONFIRM_WORD)}</small>` : ''}</div>`;
     const rows = list.length
@@ -2215,7 +2200,9 @@
     if (!targetsReady) return (targetsReady = true); // the snapshot at start is not news
     if (!ticker || !opts.ticker || !opts.markers) return;
     const groups = new Map();
+    const fz = fused();
     for (const t of fresh.filter(visible)) {
+      if (fz.hidden.has(t.id) || (fz.of.get(t.id) || []).length) continue; // one of the tracks of a target already told of
       const key = `${kindOf(t)}|${t.region || ''}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(t);
@@ -2331,9 +2318,6 @@
   client.subscribe((kind) => {
     if (kind === 'data') {
       clientRev++;
-      const seenAt = Date.now();
-      for (const t of client.list()) if (!firstSeen.has(t.id)) firstSeen.set(t.id, seenAt);
-      if (firstSeen.size > 3000) for (const id of firstSeen.keys()) if (!client.threats.has(id)) firstSeen.delete(id);
       recordMoves(Date.now());
       newTargets();
       renderAll();

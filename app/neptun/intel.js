@@ -153,7 +153,7 @@
           if (!ws.length) continue;
           const keys = new Set(ws);
           for (let i = 0; i + 1 < ws.length; i++) keys.add(`${ws[i]} ${ws[i + 1]}`); // two-word places: "Біла Церква"
-          lines.push({ mode, keys, text: line.length > 120 ? line.slice(0, 119) + '…' : line, boom: BOOM.test(line) && !NOT_BOOM.test(line) });
+          lines.push({ mode, keys, text: line.length > 120 ? line.slice(0, 119) + '…' : line, raw: line.slice(0, 240), boom: BOOM.test(line) && !NOT_BOOM.test(line) });
         }
         this.posts.set(key, { at, channel: String(m.channel || '').trim(), lines });
         added = true;
@@ -169,6 +169,17 @@
       }
       if (added) this.reindex();
       return added;
+    }
+
+    // The lines of the posts of the last maxAgeMs: [{ at, channel, mode, keys, raw }], for fuse.js (which tracks
+    // the posts name together).
+    recentLines(now = Date.now(), maxAgeMs = 25 * 60000) {
+      const out = [];
+      for (const p of this.posts.values()) {
+        if (now - p.at > maxAgeMs) continue;
+        for (const line of p.lines) out.push({ at: p.at, channel: p.channel, mode: line.mode, keys: line.keys, raw: line.raw || line.text });
+      }
+      return out;
     }
 
     reindex() {
@@ -322,9 +333,11 @@
     // Jet or plain from the Shahed posts naming the track's place: { mode, at, channel } or null.
     // A jet needs the Air Force or two channels: one channel alone often calls any fast-looking Shahed
     // "реактивний", and NEPTUN's own map then still shows an ordinary one — that is mode 'maybe'.
-    about(t) {
+    about(t, extra) {
       if (!t || t.type !== 'uav') return null;
-      const all = this.mentions(t);
+      let all = this.mentions(t);
+      // a target that is several tracks (fuse.js): what was written of the places it has been at counts as well
+      if (extra && extra.length) all = [...all, ...extra.flatMap((o) => this.mentions(o))].sort((a, b) => b.at - a.at);
       const list = all.filter((x) => x.mode === 'jet' || x.mode === 'plain');
       // "Бандероль курсом на Градизьк", "Крилата ракета на Світловодськ": NEPTUN made a Shahed track of a post
       // that names no kind; it is a missile when the posts that say so are no fewer than those about Shaheds.
@@ -365,12 +378,13 @@
     // Up to n channels that wrote about this target lately: [{ channel, at, text }]. Posts that name the
     // target's own kind come first ("реактивний БпЛА на Звенигородку" before "→Звенигородка/р-н."), then the
     // newest. Lines about another kind of target (a KAB post for a Shahed) do not count.
-    sources(t, kind = t && t.type, n = 3) {
+    sources(t, kind = t && t.type, n = 3, extra) {
       const fits = FITS[kind] || [null];
       const own = fits[0];
       const score = (x) => (x.mode === own ? 2 : x.mode ? 1 : 0);
       const best = new Map(); // channel -> its best line
-      for (const x of this.mentions(t)) {
+      const all = extra && extra.length ? [...this.mentions(t), ...extra.flatMap((o) => this.mentions(o))] : this.mentions(t);
+      for (const x of all) {
         if (!fits.includes(x.mode) || !x.channel) continue;
         const b = best.get(x.channel);
         if (!b || score(x) > score(b)) best.set(x.channel, x);
@@ -383,6 +397,7 @@
   }
 
   Intel.placeKey = placeKey; // the same keys for town names (basemap.js)
+  Intel.stem = stem; // and for fuse.js, which reads the words between two of them
   root.NeptunIntel = Intel;
   if (typeof module === 'object' && module.exports) module.exports = { Intel, stem, placeKey };
 })(typeof self !== 'undefined' ? self : this);
