@@ -236,6 +236,7 @@ NEPTUN WebSocket ──► client.js (окно виджета) ──► widget.
 | `app/neptun/types.js` | Виды целей: названия, цвета, SVG-иконки, пределы, `classify()` / `kindOf()` (реактивные, FPV), прогноз `predict()` |
 | `app/neptun/intel.js` | Посты каналов NEPTUN и ваших Telegram-каналов: какой шахед назван реактивным, источники, взрывы; без дублей |
 | `app/neptun/routes.js` | Маршруты целей из постов ваших каналов (ответ за ответом): где цель, откуда и куда летит |
+| `app/neptun/fuse.js` | Одна цель — несколько меток NEPTUN: по словам постов («Яблуневе на Мрин», «Мрин / Носівку») и по полёту (новая метка там, куда старая могла долететь, когда её перестали обновлять — только когда это ясно); остаётся самая новая, путь — в подсказке и пунктиром на карте |
 | `tests/routes.test.js` | E2E-тесты на неделе реальных постов @krop_vanek, @shpk_krop, @povitryanatrivogaaa (`npm test`) |
 | `app/neptun/basemap.js`, `app/neptun/basemap/` | Подложки карты и их данные; источники — `basemap/LICENSE.md` |
 | `app/neptun/hud.css`, `app/neptun/fonts/` | Стиль HUD; шрифты Tektur и Fira Sans Condensed (SIL OFL) |
