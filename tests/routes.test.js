@@ -627,6 +627,25 @@ test('fuse: a channel that writes of one target one place after another: those p
   assert.equal(h.update([sedniv, veresoch, yaduty], fuseCtx('12:41', [sich('12:37', 'Реактивний на Седнів'), sich('12:37', 'Реактивний на Вересоч'), sich('12:41', 'реактивний далі на Ядути.')])).hidden.size, 0, 'which of the two?');
 });
 
+test('fuse: tracks a post made or refreshed together, far apart, are two targets however a chain joins them', () => {
+  // a jet reported at A, then at B (one chain); then one post refreshes B and a track C that was part of the chain
+  const f = new Fuser();
+  const a = trk('a', 'Городня', 51.88, 31.65, '12:50');
+  const b = trk('b', 'Седнів', 51.7, 31.64, '12:52');
+  f.update([a], fuseCtx('12:50'));
+  const r1 = f.update([a, b], fuseCtx('12:52'));
+  assert.deepEqual([...r1.hidden], ['a'], 'a chain of two');
+  // at 12:55 one post (two lines) refreshes both a and b-side tracks: they were reported at once, 20 km apart: two targets
+  const a2 = { ...a, at: UTC('12:55') };
+  const b2 = { ...b, lat: 51.4, lon: 31.9, at: UTC('12:55') };
+  const r2 = f.update([a2, b2], fuseCtx('12:55:10'));
+  assert.equal(r2.hidden.size, 0, 'both are alive');
+  // the same two put together by a line ("Городня на Седнів") stay one
+  const g = new Fuser();
+  g.update([a2, b2], fuseCtx('12:55:10', [line('12:55', 'реактивний Городня на Седнів')]));
+  assert.equal(g.update([a2, b2], fuseCtx('12:55:20', [line('12:55', 'реактивний Городня на Седнів')])).hidden.size, 1);
+});
+
 test('fuse: a Shahed nothing called a Shahed next to a missile is that missile ("бандероль")', () => {
   const f = new Fuser();
   const hradyzk = trk('hradyzk', 'Градизьк', 49.23, 33.13, '12:42', { kind: 'missile', dest: true });

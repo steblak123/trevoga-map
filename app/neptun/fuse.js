@@ -33,6 +33,7 @@
   const GAP_MS = 15000; // the old one was last updated at least this long before the new one appeared (else both are of one post)
   const MAX_COST = 0.75; // of reach: a chain link more stretched than this is no clear one
   const CLEAR = 1.5; // the next candidate must cost this many times more (and 0.15 more) than the chosen one
+  const CONC_KM = 30; // tracks made by one post this far apart (and not put together by a line) are two targets
   const SAME_POST_MS = 20000; // tracks updated within this of each other are of one post (alternatives)
   const SAME_KM = 160; // places of one line are no farther apart than this (a namesake)
   const GROUP_MAX = 20; // a group of tracks is at most this many (a long flight is reported at ten places in eight minutes)
@@ -110,6 +111,7 @@
       this.links = new Map(); // old id -> { to, kind: 'chain', at }: decided by the way it flew (kept)
       this.primed = false; // the tracks seen first are of unknown age
       this.words = new Map(); // 'a>b' -> { a, b, type }: what the posts said of two tracks stays said while both live
+      this.refused = new Set(); // 'a>b' of flights that would have made one target of two that were reported at once
     }
 
     // tracks: [{ id, lat, lon, at, kind, proven, count, dest, heading, key, loc }] (kind: 'jet' | 'uav' | 'missile' | …).
@@ -169,6 +171,10 @@
 
       // what a post said stays said (its line goes out of the window long before the tracks do)
       for (const e of edges) this.words.set(`${e.a.id}>${e.b.id}`, { a: e.a.id, b: e.b.id, type: e.type });
+      for (const k of [...this.refused]) {
+        const [x, y] = k.split('>');
+        if (!byId.has(x) || !byId.has(y)) this.refused.delete(k);
+      }
       for (const [k, w] of [...this.words]) {
         if (!byId.has(w.a) || !byId.has(w.b)) this.words.delete(k);
       }
@@ -248,7 +254,7 @@
       // sequences of one channel: decided now, kept (like the flights below)
       seqCand.sort((x, y) => x.cost - y.cost);
       for (const c of seqCand) {
-        if (out.has(c.a.id) || into.has(c.b.id)) continue;
+        if (out.has(c.a.id) || into.has(c.b.id) || this.refused.has(`${c.a.id}>${c.b.id}`)) continue;
         out.add(c.a.id);
         into.add(c.b.id);
         this.links.set(c.a.id, { to: c.b.id, kind: 'seq', at: ctx.now || 0 });
@@ -263,7 +269,7 @@
         if (!born || born.initial) continue; // how old it is, nobody knows
         if (another(b, born)) continue;
         for (const a of pool) {
-          if (a.id === b.id || FAMILY[a.kind] !== FAMILY[b.kind] || out.has(a.id) || a.at > born.at - GAP_MS || a.at < born.at - RETIRED_MS) continue;
+          if (a.id === b.id || this.refused.has(`${a.id}>${b.id}`) || FAMILY[a.kind] !== FAMILY[b.kind] || out.has(a.id) || a.at > born.at - GAP_MS || a.at < born.at - RETIRED_MS) continue;
           if (into.has(b.id) || spoken.some((e) => e.type !== 'alt' && ((e.b.id === b.id && e.a.id !== a.id) || (e.a.id === a.id && e.b.id === b.id)))) continue;
           const dt = (born.at - a.at) / 60000;
           const rate = Math.max(RATE[a.kind] || 0, RATE[b.kind] || 0);
@@ -299,12 +305,40 @@
       }
 
       // ---- groups
-      const parent = new Map(tracks.map((t) => [t.id, t.id]));
-      const find = (x) => (parent.get(x) === x ? x : (parent.set(x, find(parent.get(x))), parent.get(x)));
+      // Tracks made by one post at places far apart, which no line puts together, are two targets: two lines of a
+      // list ("Реактивний на Городню ⏎ Реактивний на Вербичі"). No chain of flights or sequences joins them.
+      const firstAt = (t) => (this.seen.get(t.id) || { at: t.at }).at;
+      const pairKey = (x, y) => (x < y ? `${x}|${y}` : `${y}|${x}`);
+      const direct = new Set(spoken.map((e) => pairKey(e.a.id, e.b.id)));
+      const cannot = new Map();
+      for (let i = 0; i < pool.length; i++) {
+        for (let j = i + 1; j < pool.length; j++) {
+          const u = pool[i];
+          const v = pool[j];
+          // made by one post, or both refreshed by one post: reported at once
+          if ((Math.abs(firstAt(u) - firstAt(v)) > SAME_POST_MS && Math.abs(u.at - v.at) > SAME_POST_MS) || direct.has(pairKey(u.id, v.id)) || ctx.distanceKm(u, v) <= CONC_KM) continue;
+          if (!cannot.has(u.id)) cannot.set(u.id, new Set());
+          if (!cannot.has(v.id)) cannot.set(v.id, new Set());
+          cannot.get(u.id).add(v.id);
+          cannot.get(v.id).add(u.id);
+        }
+      }
+      const compOf = new Map(tracks.map((t) => [t.id, new Set([t.id])]));
+      const find = (x) => compOf.get(x);
+      // true when joined (or already one); false when two of them were reported at once far apart
       const union = (aId, bId) => {
-        const ra = find(aId);
-        const rb = find(bId);
-        if (ra !== rb) parent.set(ra, rb);
+        const X = compOf.get(aId);
+        const Y = compOf.get(bId);
+        if (X === Y) return true;
+        for (const u of X) {
+          const cn = cannot.get(u);
+          if (cn) for (const v of Y) if (cn.has(v)) return false;
+        }
+        for (const v of Y) {
+          X.add(v);
+          compOf.set(v, X);
+        }
+        return true;
       };
       const altIds = new Set();
       const followed = new Set(); // has a later place (a route or a chain goes on from it)
@@ -313,9 +347,13 @@
         if (e.type === 'alt') altIds.add(e.a.id).add(e.b.id);
         else followed.add(e.a.id);
       }
-      for (const [from, l] of this.links) {
+      for (const [from, l] of [...this.links].sort((x, y) => x[1].at - y[1].at)) {
         if (!byId.has(from) || !byId.has(l.to)) continue;
-        union(from, l.to);
+        if (!union(from, l.to)) {
+          this.links.delete(from);
+          this.refused.add(`${from}>${l.to}`);
+          continue;
+        }
         followed.add(from);
       }
       for (const c of cross) {
