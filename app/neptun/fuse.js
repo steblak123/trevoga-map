@@ -33,6 +33,7 @@
   const GAP_MS = 15000; // the old one was last updated at least this long before the new one appeared (else both are of one post)
   const MAX_COST = 0.75; // of reach: a chain link more stretched than this is no clear one
   const CLEAR = 1.5; // the next candidate must cost this many times more (and 0.15 more) than the chosen one
+  const SAME_POST_MS = 20000; // tracks updated within this of each other are of one post (alternatives)
   const SAME_KM = 160; // places of one line are no farther apart than this (a namesake)
   const GROUP_MAX = 20; // a group of tracks is at most this many (a long flight is reported at ten places in eight minutes)
   const NAMED_MAX = 6; // a line names at most this many places of tracks
@@ -325,18 +326,18 @@
       const base = ctx.base || (() => 0);
       for (const g of groups.values()) {
         if (g.length < 2 || g.length > GROUP_MAX) continue;
-        // the survivor: the newest — those within 45 s of the latest count as one time, then the one nothing
+        // the survivor: the newest — those within 20 s of the latest count as one time, then the one nothing
         // follows, then the one nearest to you (of "Мрин / Носівку" the worse case)
         const sure = g.some((t) => !weak(t)) ? g.filter((t) => !weak(t)) : g; // not a Shahed nothing called one
         const latest = Math.max(...sure.map((t) => t.at));
         const top = sure
-          .filter((t) => t.at >= latest - 45000)
+          .filter((t) => t.at >= latest - SAME_POST_MS)
           .sort((a, b) => followed.has(a.id) - followed.has(b.id) || base(a) - base(b) || b.at - a.at)[0];
         const rest = g.filter((t) => t !== top && ctx.distanceKm(t, top) <= SAME_KM);
         if (!rest.length) continue;
         for (const t of rest) hidden.add(t.id);
         of.set(top.id, rest.sort((a, b) => b.at - a.at));
-        const alt = rest.filter((t) => altIds.has(t.id) && Math.abs(t.at - top.at) <= 45000);
+        const alt = rest.filter((t) => altIds.has(t.id) && Math.abs(t.at - top.at) <= SAME_POST_MS);
         if (alt.length) alts.set(top.id, alt);
       }
       return { hidden, of, alts };
