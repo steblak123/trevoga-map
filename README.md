@@ -106,15 +106,18 @@ npm run dist         # інсталятор dist/trevoga-map-setup.exe (лока
 Без інсталятора: `scripts\install.bat` встановить залежності, додасть автозапуск і запустить віджет.
 Така git-копія теж оновлюється сама: віджет робить `git fetch` і, якщо у папці немає власних змін, підтягує нові коміти та перезапускається.
 
-**Випуск нової версії.** Інсталятор збирає GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)), і всі встановлені віджети отримують його самі. Запустити збірку можна двома способами:
-- тегом:
+**Випуск нової версії.** Інсталятор збирає GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)), і всі встановлені віджети отримують його самі.
+Перед випуском: версія в `package.json` (`npm version X.Y.Z --no-git-tag-version`) і розділ `## X.Y.Z` угорі [`CHANGELOG.md`](CHANGELOG.md) мають збігатися;
+нові пункти дописуються в цей розділ, а не у вже випущений (тег, що вже є, повторно не випускається). Запустити збірку можна двома способами:
+- тегом (приклад для 1.3.0):
   ```bash
-  git tag v1.2.0
-  git push origin v1.2.0
+  git push origin main
+  git tag v1.3.0
+  git push origin v1.3.0
   ```
 - кнопкою на GitHub: **Actions → Release → Run workflow**.
 
-Що нового береться з розділу `## 1.2.0` у [`CHANGELOG.md`](CHANGELOG.md).
+Що нового береться з розділу `## X.Y.Z` у [`CHANGELOG.md`](CHANGELOG.md).
 
 **Без GitHub Actions** (наприклад, коли вони недоступні для акаунта) — зібрати на своєму Windows і викласти вручну:
 1. `npm run release:local` — збирає `dist\trevoga-map-setup.exe`, `.blockmap` і `latest.yml` (вбудований токен перед збіркою видаляється).
